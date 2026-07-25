@@ -42,6 +42,9 @@
 
 [Final Memory Table](#final-memory-table)
 
+**Practice**
+- [Coding Practice Questions](#coding-practice-questions)
+
 ---
 
 ## 1. wire vs logic vs reg
@@ -560,3 +563,257 @@ The custom driver drives DUT signals; the environment holds the driver handle.
 |---|---|
 | `put()` | Send transaction |
 | `get()` | Receive transaction |
+
+---
+
+## Coding Practice Questions
+
+Worked examples — each shows the interview question, the code answer, a behavior/flow explanation, and the concepts it tests. Read the concepts list first, then try to reproduce the code from memory before checking.
+
+### 1. Class with Inheritance + `randomize() with` Inline Constraint
+
+**Interview question:** "Write a SystemVerilog example where a child class inherits from a parent class. Add random variables and use `randomize() with` to apply an inline constraint."
+
+```verilog
+class packet;
+    rand bit [31:0] data;
+endclass
+
+
+class axi_packet extends packet;
+    rand bit [15:0] address;
+endclass
+
+
+module test;
+
+    axi_packet pkt;
+
+    initial begin
+        pkt = new();
+
+        pkt.randomize() with {
+            address inside {[100:200]};
+            data > 50;
+        };
+
+        $display("Address = %0d Data = %0d",
+                  pkt.address,
+                  pkt.data);
+    end
+
+endmodule
+```
+
+**Concepts tested:** `class`, `extends` (inheritance), `rand`, `randomize()`, inline constraints, object creation with `new()`.
+
+---
+
+### 2. fork...join_any / join_none — and the Difference from join
+
+**Interview question:** "Write a SystemVerilog example showing the difference between `fork...join`, `fork...join_any`, and `fork...join_none`."
+
+**Code — `join_any`:**
+```verilog
+module test;
+
+    initial begin
+        $display("Start");
+
+        fork
+            begin
+                #10;
+                $display("Task 1");
+            end
+
+            begin
+                #20;
+                $display("Task 2");
+            end
+
+            begin
+                #30;
+                $display("Task 3");
+            end
+        join_any
+
+        $display("After join_any");
+
+        disable fork;
+    end
+
+endmodule
+```
+
+**Behavior:**
+```
+Task 1 finishes first
+        ↓
+join_any releases parent
+        ↓
+Parent continues
+        ↓
+disable fork stops remaining tasks
+```
+
+**Code — `join_none`:**
+```verilog
+module test;
+
+    initial begin
+        $display("Start");
+
+        fork
+            begin
+                #10;
+                $display("Task 1");
+            end
+
+            begin
+                #20;
+                $display("Task 2");
+            end
+
+            begin
+                #30;
+                $display("Task 3");
+            end
+        join_none
+
+        $display("After join_none");
+    end
+
+endmodule
+```
+
+**Behavior:**
+```
+Start tasks
+     ↓
+Parent continues immediately
+     ↓
+"After join_none" prints
+     ↓
+Tasks continue in background
+```
+
+**Concepts tested:** `fork`, `join`, `join_any`, `join_none`, `disable fork`, parallel execution.
+
+---
+
+### 3. Mixed Question — Inheritance + Virtual Functions + Static + $cast + Randomization
+
+**Interview question:** "Write a SystemVerilog example combining inheritance, virtual functions, static variables, `$cast`, randomization, `post_randomize()`, and `fork...join_none`."
+
+```verilog
+class packet;
+
+    static int packet_count = 0;
+
+    rand bit [7:0] data;
+    bit parity;
+
+    function new();
+        packet_count++;
+    endfunction
+
+    virtual function void display();
+        $display("Base Packet: data = %0d", data);
+    endfunction
+
+    function void post_randomize();
+        parity = ^data;
+    endfunction
+
+endclass
+
+
+class axi_packet extends packet;
+
+    function void display();
+        $display("AXI Packet: data = %0d parity = %0d",
+                  data, parity);
+    endfunction
+
+endclass
+
+
+module test;
+
+    packet     p;
+    axi_packet ap;
+
+    initial begin
+
+        ap = new();
+        ap.randomize();
+
+        p = ap;               // upcast (implicit)
+
+        if ($cast(ap, p))     // downcast (explicit, checked)
+        begin
+            ap.display();
+        end
+        else
+        begin
+            $display("Cast Failed");
+        end
+
+        fork
+            begin
+                #10;
+                $display("Monitor running");
+            end
+
+            begin
+                #20;
+                $display("Timeout running");
+            end
+        join_none
+
+        $display("Main test continues");
+
+    end
+
+endmodule
+```
+
+**Concepts tested:** inheritance (`extends`), virtual function / polymorphism, `static` variable, `rand` / `randomize()`, `post_randomize()`, `$cast()` (upcasting and downcasting), `fork...join_none`.
+
+---
+
+### Coding Interview Memory Sheet
+
+```
+Create object:
+    object = new();
+
+Inheritance:
+    class child extends parent;
+
+Random variable:
+    rand bit ...;
+
+Randomization:
+    object.randomize();
+
+Inline constraint:
+    object.randomize() with {
+        condition;
+    };
+
+Virtual function:
+    virtual function void name();
+
+Cast:
+    $cast(child_handle, parent_handle);
+
+Static:
+    static int variable;
+
+Concurrency:
+    fork
+        process1;
+        process2;
+    join_any / join_none
+```
