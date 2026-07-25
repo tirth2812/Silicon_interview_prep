@@ -1,707 +1,981 @@
-# Google Silicon System and Software Integration Engineer
-# Round 1 SystemVerilog / DV Quick Revision Cheat Sheet
+========================================================
+SystemVerilog / UVM Interview Quick Revision Sheet
+========================================================
 
----
 
-# 📗 Foundational
+========================
+1. wire vs logic vs reg
+========================
 
----
-
-## 1. wire vs logic vs reg
-
-### wire
+wire:
 - Net type.
-- Used for continuous assignments.
+- Used for continuous assignment.
 - Does not store values.
-- Supports multiple drivers.
 
 Example:
-```systemverilog
 wire y;
 assign y = a & b;
-```
 
-### reg
-- Old Verilog variable type.
+
+reg:
+- Old Verilog variable.
 - Used inside procedural blocks.
-- Does NOT always mean hardware register.
+- Does not always mean hardware register.
 
-Clocked:
-```systemverilog
+Example:
+
 reg q;
 
 always @(posedge clk)
     q <= d;
-```
-→ Flip-flop
 
-Combinational:
-```systemverilog
-reg y;
 
-always @(*)
-    y = a & b;
-```
-→ Combinational logic
+logic:
+- SystemVerilog replacement for most reg usage.
+- Hardware depends on coding style, not keyword.
 
-### logic
-- SystemVerilog replacement for most `reg` usage.
-- Removes confusion caused by the name `reg`.
-- Hardware depends on coding style, not the keyword.
 
-### Interview Answer:
-"SystemVerilog introduced logic to remove confusion caused by reg. A reg is only a procedural variable and does not necessarily represent a hardware register. Logic can replace most uses of reg and many uses of wire, but wire is still needed for multiple drivers."
+Interview:
+"logic removes confusion caused by reg. It is used for most SystemVerilog signals."
 
----
 
-# 2. Blocking (=) vs Non-blocking (<=)
+========================================================
 
-## Blocking (=)
+
+=============================
+2. Blocking vs Non-blocking
+=============================
+
+Blocking (=)
 
 Used for:
 - Combinational logic
 - always_comb
 
-Behavior:
-- Immediate update
-- Executes line by line
-
 Example:
-```systemverilog
+
 always_comb begin
     y = a & b;
 end
-```
 
-## Non-blocking (<=)
+Behavior:
+- Executes immediately
+- Line by line
+
+
+Non-blocking (<=)
 
 Used for:
 - Sequential logic
 - always_ff
 - Flip-flops
 
-Behavior:
-- Updates together at clock edge
-
 Example:
-```systemverilog
+
 always_ff @(posedge clk)
     q <= d;
-```
 
-### Rule:
-No clock → `=`
 
-Clock → `<=`
+Rule:
 
-### Interview Answer:
-"Blocking assignments update immediately and are used for combinational logic. Non-blocking assignments update together at clock edges and are used for sequential logic. Mixing them in clocked logic can create simulation mismatches."
+No clock  → =
+Clock     → <=
 
----
 
-# 3. always_comb vs always_ff vs always_latch
+Interview:
+"Blocking updates immediately and is used for combinational logic. Non-blocking updates at clock edge and is used for sequential logic."
 
-## always_comb
+
+========================================================
+
+
+=====================================
+3. always_comb / always_ff / always_latch
+=====================================
+
+always_comb:
+
 Creates:
 - Combinational logic
 
 No memory.
 
-## always_ff
+
+always_ff:
+
 Creates:
-- Flip-flops
+- Flip-flop
 
 Requires clock.
 
-## always_latch
-Creates:
-- Latches
 
-### Unintended Latch
+always_latch:
+
+Creates:
+- Latch
+
+
+Unintended Latch:
 
 Problem:
 
-```systemverilog
 always_comb begin
+
     if(enable)
         y = a;
+
 end
-```
 
-When enable is false, y has no assignment.
 
-Hardware creates a latch.
+If enable = 0:
 
-### Interview Answer:
-"always_comb describes combinational logic, always_ff describes clocked sequential logic, and always_latch describes intentional latch behavior. Missing assignments in combinational blocks can unintentionally infer latches."
+No assignment to y.
 
----
+Hardware stores previous value.
 
-# 4. Race Conditions
+Latch is created.
 
-## What is a race condition?
 
-When two processes access the same signal at the same simulation time and result depends on execution order.
+Correct:
 
-### Prevention:
-- Non-blocking assignments
+always_comb begin
+
+    if(enable)
+        y = a;
+    else
+        y = 0;
+
+end
+
+
+Interview:
+"always_comb describes combinational logic, always_ff describes sequential logic, and always_latch describes intentional latch behavior."
+
+
+========================================================
+
+
+==================
+4. Race Condition
+==================
+
+Problem:
+
+Two processes access the same signal at the same simulation time.
+
+Result depends on execution order.
+
+
+Prevention:
+
+- Non-blocking assignment
 - Clocking blocks
 - UVM synchronization
 
-### Interview Answer:
-"A race condition occurs when multiple processes access the same signal at the same simulation time and the result depends on scheduling order. SystemVerilog reduces this using non-blocking assignments, clocking blocks, and synchronization mechanisms."
 
----
+Interview:
+"Race condition occurs when multiple processes access the same signal at the same time and the result depends on scheduling order."
 
-# 5. Clocking Blocks
+
+========================================================
+
+
+=================
+5. Clocking Block
+=================
 
 Purpose:
-- Control when testbench drives signals.
-- Control when testbench samples signals.
-- Avoid DUT/TB race conditions.
+
+Controls:
+
+- When driver drives signals.
+- When monitor samples signals.
+
 
 Flow:
 
-Clock edge  
-↓  
-DUT updates  
-↓  
-Monitor samples  
-↓  
+Clock edge
+
+↓
+
+DUT updates
+
+↓
+
+Monitor samples
+
+↓
+
 Driver drives next input
 
-### Interview Answer:
-"Clocking blocks define timing relationships between testbench and DUT signals, preventing race conditions by controlling when signals are sampled and driven."
 
----
+Interview:
+"Clocking blocks define timing between DUT and testbench to avoid race conditions."
 
-# 6. Driver and Monitor Synchronization
+
+========================================================
+
+
+==========================
+6. Driver and Monitor
+==========================
 
 Driver:
-- Writes inputs.
+
+- Sends inputs to DUT.
+
+Flow:
+
+Driver → DUT
+
 
 Monitor:
-- Reads outputs.
 
-Both use same clock convention to:
-- Avoid race conditions.
-- Sample correct values.
-- Match hardware timing.
+- Reads DUT outputs.
 
-### Interview Answer:
-"The driver and monitor synchronize with the DUT clock so stimulus is applied and outputs are sampled at predictable times. This avoids races and ensures simulation matches hardware behavior."
+Flow:
 
----
+DUT → Monitor
 
-# 7. OOP Concepts
 
-## Inheritance
+Both use same clock timing to avoid races.
 
-Child reuses parent.
+
+========================================================
+
+
+================
+7. Inheritance
+================
+
+Child gets parent properties and functions.
+
 
 Syntax:
 
-```systemverilog
 class child extends parent;
-```
 
----
+endclass
 
-## Virtual Function
 
-Allows polymorphism.
+Example:
+
+class axi_packet extends packet;
+
+endclass
+
+
+Flow:
+
+packet
+  |
+  ↓
+axi_packet
+
+
+========================================================
+
+
+====================
+8. Virtual Function
+====================
+
+Used for polymorphism.
 
 Parent:
 
-```systemverilog
 virtual function void display();
+
 endfunction
-```
 
-Child overrides.
 
----
+Child:
 
-## Polymorphism
+function void display();
 
-Same function call behaves differently depending on object type.
+endfunction
 
----
 
-## Static Variable
+Allows child to override parent function.
 
-One copy shared by all objects.
+
+========================================================
+
+
+=================
+9. Polymorphism
+=================
+
+Same function call behaves differently depending on object.
+
 
 Example:
 
-```systemverilog
+packet p;
+
+p = new axi_packet();
+
+p.display();
+
+
+Requires:
+
+virtual function
+
+
+Rule:
+
+Parent handle + Child object + virtual
+=
+Child function runs
+
+
+========================================================
+
+
+====================
+10. Static Variable
+====================
+
+One shared copy for all objects.
+
+
+Example:
+
 static int count;
-```
+
 
 Used for:
-- Object counting
+
+- Counting objects
 - Shared information
 
----
-
-## Instance Variable
-
-Each object has separate copy.
-
----
-
-## Parameterized Class
-
-One class supports different configurations.
 
 Example:
 
-```systemverilog
-class packet #(int WIDTH=8);
-```
+packet1 created
 
----
+count = 1
 
-# 8. disable fork
+packet2 created
 
-Purpose:
-- Stop remaining forked processes.
+count = 2
 
-Common:
 
-```systemverilog
-join_any
+========================================================
 
-disable fork;
-```
 
-### Interview Answer:
-"disable fork terminates all active child processes created by the current fork block. It is commonly used after join_any to stop remaining unnecessary processes."
+=====================
+11. Instance Variable
+=====================
 
----
+Each object has its own copy.
 
-# 9. rand vs randc
 
-## rand
+Example:
+
+int id;
+
+
+Object1:
+
+id = 10
+
+
+Object2:
+
+id = 20
+
+
+========================================================
+
+
+========================
+12. Parameterized Class
+========================
+
+One class with different sizes.
+
+
+Example:
+
+class packet #(int WIDTH = 8);
+
+    bit [WIDTH-1:0] data;
+
+endclass
+
+
+Usage:
+
+packet #(8)
+
+packet #(16)
+
+
+#() passes class parameters.
+
+
+========================================================
+
+
+=====================
+13. new() Constructor
+=====================
+
+new() creates an object.
+
+
+Example:
+
+packet p;
+
+p = new();
+
+
+Handle:
+
+p
+
+points to
+
+packet object
+
+
+========================================================
+
+
+===============================
+14. new() vs type_id::create()
+===============================
+
+
+new():
+
+- Direct creation.
+- Creates exact class.
+- Cannot be overridden.
+
+
+Example:
+
+packet p;
+
+p = new();
+
+
+
+type_id::create():
+
+- UVM factory creation.
+- Allows override.
+
+
+Example:
+
+driver = driver_type::type_id::create("driver");
+
+
+Factory can change:
+
+normal_driver
+
+to
+
+stress_driver
+
+
+Interview:
+
+"new creates a fixed object. type_id::create uses UVM factory and allows replacement using overrides."
+
+
+========================================================
+
+
+====================
+15. rand and randomize
+====================
+
+rand:
+
+Allows randomization.
+
+
+Example:
+
+rand bit [7:0] data;
+
+
+Call:
+
+pkt.randomize();
+
+
+Generates random values.
+
+
+========================================================
+
+
+=============================
+16. randomize() with Constraint
+=============================
+
+
+Syntax:
+
+object.randomize() with {
+
+    constraint;
+
+};
+
+
+Example:
+
+pkt.randomize() with {
+
+    data > 50;
+
+};
+
+
+Means:
+
+Generate random value but satisfy condition.
+
+
+========================================================
+
+
+===========
+17. inside
+===========
+
+
+Used in constraints.
+
+Example:
+
+address inside {[100:200]};
+
+
+Means:
+
+Address must be between 100 and 200.
+
+
+Other:
+
+opcode inside {1,3,5};
+
+
+========================================================
+
+
+==============
+18. rand vs randc
+==============
+
+
+rand:
+
 - Random values.
-- Duplicates allowed.
+- Repetition allowed.
+
 
 Example:
-```
+
 5
 8
 5
 2
-```
 
-## randc
+
+
+randc:
+
 - Random cyclic.
-- No repetition until all values are used.
+- No repeat until all values used.
 
-### Interview Answer:
-"rand allows repeated random values, while randc generates random values without repetition until the complete value space is exhausted."
 
----
+========================================================
 
-# 10. randomize() with Inline Constraint
 
-Example:
+================
+19. fork / join
+================
 
-```systemverilog
-pkt.randomize() with {
-    address inside {[100:200]};
-};
-```
 
-Meaning:
-- Temporary constraint.
-- Applies only during this randomization.
+fork:
 
-### Interview Answer:
-"randomize() with applies temporary constraints during randomization without modifying the original class constraint."
+Runs processes parallel.
 
----
 
-# 11. fork join_any / join_none
+join:
 
-## join
-Wait for all tasks.
+Wait for all processes.
 
-## join_any
-Wait for first task.
 
-## join_none
+join_any:
+
+Wait for first process.
+
+
+join_none:
+
 Do not wait.
+
 
 Memory:
 
-```
 join       → ALL
+
 join_any   → ONE
+
 join_none  → NONE
-```
 
----
 
-# 📘 Commonly Asked
+========================================================
 
----
 
-# 12. new() vs type_id::create()
+================
+20. disable fork
+================
 
-## new()
-- Direct creation.
-- Fixed type.
 
-## type_id::create()
-- Factory-based creation.
-- Supports overrides.
+Stops remaining fork processes.
 
-### Interview Answer:
-"new() directly creates the specified object, while type_id::create() uses the UVM factory and allows type or instance overrides without modifying the environment."
 
----
+Common:
 
-# 13. copy() vs clone()
+fork
 
-## copy()
+process1();
 
-Copies into existing object.
+process2();
 
-```systemverilog
-dest.copy(src);
-```
+join_any
 
-## clone()
+disable fork;
 
-Creates new object and copies.
 
-```systemverilog
-new_obj = old_obj.clone();
-```
+Use:
 
-### Interview Answer:
-"copy() copies data into an existing object, while clone() creates a new object and copies the contents into it."
+After one process finishes, stop others.
 
----
 
-# 14. Mailbox vs TLM FIFO
+========================================================
 
-## Mailbox
-- SystemVerilog feature.
-- Process communication.
 
-Task → Mailbox → Task
+====================
+21. $cast()
+====================
 
-## TLM FIFO
-- UVM feature.
-- Transaction communication.
 
-Monitor → FIFO → Scoreboard
+Used for downcasting.
 
-### Common Answers:
 
-## Queue vs mailbox
-"Queue stores data, while mailbox provides synchronized communication between processes."
+Syntax:
 
-## Why use TLM communication?
-"TLM allows components to exchange complete transactions instead of individual signals, improving modularity and reuse."
+$cast(destination, source);
 
-## How does scoreboard receive transactions?
-"Monitor sends transactions through analysis ports, and scoreboard receives them through analysis implementation or TLM FIFO."
 
----
+Example:
 
-# 📕 Previously Asked
+$cast(child_handle, parent_handle);
 
-## Mixed SV Coding Question
 
-Topics combined:
 
-- fork_join_none
-- virtual functions
-- $cast
-- static variables
-- post_randomize parity
+Upcasting:
 
-Remember:
+Child handle → Parent handle
 
-```
-extends        → inheritance
+Example:
 
-virtual        → polymorphism
+parent = child;
 
-$cast          → safe conversion
 
-static         → shared variable
+Downcasting:
 
-randomize()    → generate values
+Parent handle → Child handle
 
-post_randomize → calculate derived fields
+Example:
 
-join_none      → background execution
-```
+$cast(child,parent);
 
----
 
-# Final One-Line Revision
+========================================================
 
-```
-wire       → connection
-logic      → modern signal type
-reg        → old procedural variable
 
-=          → combinational
-<=         → sequential
+=========================
+22. post_randomize()
+=========================
 
-always_comb → gates
-always_ff   → flip-flops
-always_latch→ latch
 
-virtual    → child behavior
-$cast      → safe conversion
-static     → shared variable
+Runs automatically after randomize().
 
-rand       → random
-randc      → unique random
 
-copy       → existing object
-clone      → new object
+Example:
 
-join       → all
-join_any   → one
-join_none  → none
+function void post_randomize();
 
-new        → direct creation
-create     → factory creation
-```
+    parity = ^data;
 
----
+endfunction
 
-# 💻 Coding Questions Quick Revision
 
----
+Used for:
 
-# 1. Class Inheritance + randomize() with Inline Constraint
+Calculating derived values after randomization.
 
-## Interview Question
 
-"Write a SystemVerilog class with inheritance and use randomize() with inline constraints."
+========================================================
 
-## Code
 
-```systemverilog
+========================
+23. XOR Parity (^data)
+========================
+
+
+Example:
+
+data = 8'b10101010
+
+
+parity = ^data;
+
+
+XOR all bits together.
+
+Result stored in parity.
+
+
+Used for parity checking.
+
+
+========================================================
+
+
+==========================
+24. Transaction Object
+==========================
+
+
+Transaction is a class object representing one operation/data transfer.
+
+
+Example:
+
 class packet;
-
-    rand bit [31:0] data;
-
-endclass
-
-
-class axi_packet extends packet;
-
-    rand bit [15:0] address;
-
-endclass
-
-
-module test;
-
-    axi_packet pkt;
-
-    initial begin
-
-        pkt = new();
-
-        pkt.randomize() with {
-            address inside {[100:200]};
-            data > 50;
-        };
-
-        $display("Address = %0d Data = %0d",
-                  pkt.address,
-                  pkt.data);
-
-    end
-
-endmodule
-```
-
-2. fork...join_any / join_none / join
-Interview Question
-
-"Write a SystemVerilog example showing the difference between fork, join, join_any, and join_none."
-
-Code
-module test;
-
-initial begin
-
-    $display("Start");
-
-    fork
-
-        begin
-            #10;
-            $display("Task 1");
-        end
-
-        begin
-            #20;
-            $display("Task 2");
-        end
-
-        begin
-            #30;
-            $display("Task 3");
-        end
-
-    join_any
-
-    $display("After join_any");
-
-    disable fork;
-
-end
-
-endmodule
-
-```
-3. Mixed SV Concepts Coding Question
-Interview Question
-
-"Write a SystemVerilog example combining inheritance, virtual function, static variable, $cast, post_randomize, and fork_join_none."
-
-Code
-class packet;
-
-    static int packet_count = 0;
 
     rand bit [7:0] data;
-    bit parity;
-
-
-    function new();
-        packet_count++;
-    endfunction
-
-
-    virtual function void display();
-
-        $display("Base Packet data=%0d", data);
-
-    endfunction
-
-
-    function void post_randomize();
-
-        parity = ^data;
-
-    endfunction
 
 endclass
-
-
-
-class axi_packet extends packet;
-
-
-    function void display();
-
-        $display("AXI Packet data=%0d parity=%0d",
-                  data,
-                  parity);
-
-    endfunction
-
-
-endclass
-
-
-
-module test;
-
-    packet p;
-    axi_packet ap;
-
-
-    initial begin
-
-        ap = new();
-
-        ap.randomize();
-
-
-        p = ap;
-
-
-        if($cast(ap,p))
-            ap.display();
-        else
-            $display("Cast Failed");
-
-
-        fork
-
-            begin
-                #10;
-                $display("Monitor running");
-            end
-
-
-            begin
-                #20;
-                $display("Timeout running");
-            end
-
-
-        join_none
-
-
-        $display("Main continues");
-
-    end
-
-endmodule
-
-```
-
-Coding Memory Checklist
-
-Before interview remember:
-
-Class:
-    class name;
-    variables;
-    functions;
-    endclass
 
 
 Object:
-    handle = new();
+
+packet pkt;
 
 
-Inheritance:
-    class child extends parent;
+Used between:
+
+Sequence → Driver → DUT
 
 
-Randomization:
-    rand
-    randomize()
-    randomize() with {};
+========================================================
 
 
-Polymorphism:
-    virtual function
+========================
+25. copy vs clone
+========================
 
 
-Casting:
-    $cast(child,parent);
+copy():
+
+Copies data into existing object.
 
 
-Concurrency:
-    fork
-    join
-    join_any
-    join_none
-    disable fork;
+Example:
+
+dest.copy(src);
+
+
+
+clone():
+
+Creates new object and copies data.
+
+
+Example:
+
+new_obj = old_obj.clone();
+
+
+========================================================
+
+
+=====================
+26. Shallow vs Deep Copy
+=====================
+
+
+Shallow copy:
+
+- New outer object.
+- Internal objects shared.
+
+
+Deep copy:
+
+- New outer object.
+- Internal objects also copied.
+
+
+UVM uses clone to avoid shared transaction modification.
+
+
+========================================================
+
+
+==================
+27. TLM FIFO
+==================
+
+
+Transaction communication mechanism in UVM.
+
+
+Syntax:
+
+uvm_tlm_fifo #(packet) fifo;
+
+
+Means:
+
+FIFO stores packet objects.
+
+
+Create:
+
+fifo = new("fifo");
+
+
+Producer:
+
+fifo.put(pkt);
+
+
+Consumer:
+
+fifo.get(pkt);
+
+
+
+Flow:
+
+Monitor
+
+↓
+
+TLM FIFO
+
+↓
+
+Scoreboard
+
+
+========================================================
+
+
+========================
+28. UVM Driver Concept
+========================
+
+
+UVM provides:
+
+uvm_driver
+
+
+We extend it:
+
+class alu_driver extends uvm_driver;
+
+
+Our custom driver drives DUT signals.
+
+
+Environment contains driver handle.
+
+
+Flow:
+
+Test
+
+↓
+
+Environment
+
+↓
+
+Driver
+
+↓
+
+DUT
+
+
+========================================================
+
+
+FINAL MEMORY TABLE
+========================================================
+
+
+=              → combinational
+
+<=             → sequential
+
+always_comb    → logic
+
+always_ff      → flip-flop
+
+always_latch   → latch
+
+
+extends       → inheritance
+
+virtual       → polymorphism
+
+$cast         → downcasting
+
+static        → shared variable
+
+rand          → random
+
+randc         → unique random
+
+
+new           → direct object creation
+
+type_id::create → factory creation
+
+
+copy          → existing object copy
+
+clone         → new object copy
+
+
+join          → all
+
+join_any      → one
+
+join_none     → none
+
+
+put()         → send transaction
+
+get()         → receive transaction
