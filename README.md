@@ -1,4 +1,4 @@
-# Google Silicon System and Software Integration Engineer
+
 # Round 1 SystemVerilog / DV Quick Revision Cheat Sheet
 
 ---
