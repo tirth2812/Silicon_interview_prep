@@ -1,0 +1,1892 @@
+# Design Verification (DV) & UVM — Interview Cheat Sheet
+
+## Table of Contents
+
+1. [Verification Plan from Specification](#1-verification-plan-from-specification)
+2. [Constrained Random vs Directed vs Formal Verification](#2-constrained-random-vs-directed-vs-formal-verification)
+3. [Verification Plan for a New Feature/Block](#3-verification-plan-for-a-new-featureblock)
+4. [Simulation vs Emulation vs FPGA Prototyping](#4-simulation-vs-emulation-vs-fpga-prototyping)
+5. [Co-simulation (RTL + Firmware)](#5-co-simulation-rtl--firmware)
+6. [uvm_config_db vs uvm_resource_db](#6-uvm_config_db-vs-uvm_resource_db)
+7. [UVM Factory — new() vs type_id::create(), Type Override vs Instance Override](#7-uvm-factory--new-vs-type_idcreate-type-override-vs-instance-override)
+8. [TLM Communication — put_port, get_port, analysis_port](#8-tlm-communication--put_port-get_port-analysis_port)
+9. [Sequence → Sequencer → Driver Flow](#9-sequence--sequencer--driver-flow)
+10. [Virtual Sequence / Virtual Sequencer](#10-virtual-sequence--virtual-sequencer)
+11. [UVM Objections](#11-uvm-objections)
+12. [Designing a UVM Testbench for a Given Design](#12-designing-a-uvm-testbench-for-a-given-design)
+13. [Code Coverage vs Functional Coverage](#13-code-coverage-vs-functional-coverage)
+14. [Coverage Closure and Verification Completion Criteria](#14-coverage-closure-and-verification-completion-criteria)
+15. [Assertion vs Scoreboard](#15-assertion-vs-scoreboard)
+16. [Debugging a Failing Regression Test](#16-debugging-a-failing-regression-test)
+17. [Firmware and RTL Consistency Validation](#17-firmware-and-rtl-consistency-validation)
+18. [RAM Verification Problem (Pre-Silicon & Post-Silicon)](#18-ram-verification-problem-pre-silicon--post-silicon)
+19. [Google DV Interview Problem Examples](#19-google-dv-interview-problem-examples)
+
+---
+
+# 1. Verification Plan from Specification
+
+## Interview Question
+
+> "How would you build a verification plan from a design specification?"
+
+## Concept
+
+A verification plan is the bridge between what the design is *supposed* to do (the spec) and how you *prove* it does that. It converts the spec into:
+
+- Features to verify
+- Verification scenarios
+- Test cases
+- Checking mechanisms (scoreboard/assertions)
+- Coverage goals
+- Corner cases
+
+**Why it's needed:** Without a plan, verification becomes ad-hoc — engineers write tests for whatever comes to mind, and important requirements silently go unverified. A plan is a living checklist that guarantees traceability from spec → test → coverage.
+
+**Where it's used:** Every DV project, from a small FIFO to a full SoC, starts with a verification plan (often a spreadsheet or a formal "vPlan" document) before a single testbench line is written.
+
+## Problem / Motivation
+
+Design specs are large and detailed. Engineers need a systematic method to make sure:
+- Every requirement is mapped to at least one test.
+- Every corner/boundary case is identified early, not discovered by accident.
+- Progress can be tracked (coverage % against the plan).
+
+## Flow / Architecture
+
+```
+Specification
+      ↓
+Feature Extraction
+      ↓
+Verification Scenario
+      ↓
+Test Creation
+      ↓
+Scoreboard / Assertions
+      ↓
+Coverage
+      ↓
+Corner Cases
+      ↓
+Coverage Closure
+```
+
+## Example
+
+**FIFO Specification → Feature Extraction**
+
+| Feature | Description | Verification Goal |
+|---|---|---|
+| Write | Store data into FIFO | Data should be stored correctly |
+| Read | Retrieve data from FIFO | Correct data should be returned |
+| Full | Prevent overflow | Overflow should be prevented |
+| Empty | Prevent invalid read | Invalid reads should be handled |
+| Reset | Clear FIFO | FIFO should return to default state |
+
+**Scenario for the Write feature:**
+
+```
+Apply write enable
+      ↓
+Send data
+      ↓
+Read data back
+      ↓
+Compare expected vs actual
+```
+
+**Test creation (UVM flow):**
+
+```
+Sequence → Sequencer → Driver → DUT
+```
+The sequence creates a `Write Transaction (Data = 50)`; the driver converts that transaction into DUT pin wiggles.
+
+**Checking:**
+- *Scoreboard* — compares Expected Read Data (50) vs Actual Read Data (50) → PASS.
+- *Assertion* — protocol rule, e.g. `assert property(!(read_enable && empty));` (FIFO should never be read while empty).
+
+**Coverage** answers "did we test it?" — e.g. Write ✓, Read ✓, Full ✓, Empty ✓, Reset ✓.
+**Corner cases** — full-then-write, empty-then-read, reset-during-operation, back-to-back writes.
+
+## Interview Answer
+
+> "I start by understanding the specification and extracting all features that need verification. Then I create verification scenarios and tests. I use drivers to apply stimulus, monitors to observe DUT behavior, scoreboards to check correctness, and assertions for protocol rules. Finally, I define coverage goals, test corner cases, and continue until coverage closure."
+
+## Common Follow-up Questions
+
+### Q1. Difference between a feature and a verification scenario?
+A feature is *what* the design supports (e.g. "Write"); a scenario is *how* you verify it (e.g. "apply write enable, send data, read back, compare").
+
+### Q2. Difference between coverage and scoreboard?
+Coverage checks whether a scenario was **tested** (completeness); the scoreboard checks whether the result was **correct** (correctness).
+
+### Q3. How do you identify corner cases?
+Look at boundary conditions, invalid operations, reset behavior, max/min values, and simultaneous/overlapping operations.
+
+## Quick Revision
+
+```
+Specification → Features → Scenarios → Tests → Scoreboard/Assertions → Coverage → Corner Cases → Coverage Closure
+```
+
+| Term | Meaning |
+|---|---|
+| Feature | What to verify |
+| Scenario | How to verify |
+| Scoreboard | Correctness |
+| Coverage | Completeness |
+
+---
+
+# 2. Constrained Random vs Directed vs Formal Verification
+
+## Interview Question
+
+> "Explain directed verification, constrained-random verification, and formal verification. When would you use each?"
+
+## Concept
+
+These are the three fundamental *stimulus generation / proof* strategies used in verification, each trading off predictability, bug-finding power, and cost.
+
+## Problem / Motivation
+
+No single method covers everything: directed tests are fast to write and debug but only cover what you think of; constrained-random explores far more of the state space automatically; formal mathematically proves properties hold for *all* possible inputs, which simulation can never fully guarantee.
+
+## Flow / Architecture
+
+### Directed Verification
+Manually written tests for known scenarios.
+```
+Apply reset → Check FIFO empty
+```
+**Advantages:** easy debugging, predictable, good for basic sanity.
+**Limitations:** only tests known scenarios, may miss unexpected bugs.
+
+### Constrained Random Verification
+Randomize stimulus (address, data, transactions) inside legal constraints.
+
+```systemverilog
+constraint valid_address {
+    address < 32;
+}
+```
+**Advantages:** finds unexpected bugs, explores a large input space, pairs well with coverage.
+**Limitations:** harder to debug, needs solid coverage planning to know when to stop.
+
+### Formal Verification
+Mathematically proves a property for *all* reachable states (e.g., "FIFO should never overflow").
+**Advantages:** finds deep corner cases, provides mathematical proof (not just "we didn't see a failure").
+**Limitations:** expensive/slow for large designs, complex setup (state-space explosion).
+
+## Example
+
+For a FIFO:
+- **Directed**: write 3 items, read 3 items, check order — quick sanity check.
+- **Constrained-random**: randomize write/read sequences with legal address/data constraints to hammer full/empty boundary transitions.
+- **Formal**: prove `full == 1 -> no further write accepted` holds for every possible sequence of operations, not just the ones you thought to simulate.
+
+## Comparison
+
+| | Directed | Constrained Random | Formal |
+|---|---|---|---|
+| Input | Manual | Random + constraints | Mathematical proof |
+| Finds | Known bugs | Unknown bugs | Property violations |
+| Debug | Easy | Medium | Complex |
+
+## Interview Answer
+
+> "Directed verification is used for known scenarios, constrained-random verification explores a larger input space to find unexpected bugs, and formal verification mathematically proves specific properties."
+
+## Common Follow-up Questions
+
+### Q1. Why not just use formal for everything?
+It doesn't scale to large designs — state-space explosion makes it too slow/expensive; it's best reserved for critical, well-bounded properties (e.g., FIFO overflow, arbiter fairness, protocol handshakes).
+
+### Q2. How do constrained-random and coverage relate?
+Random stimulus alone doesn't guarantee completeness — functional coverage tells you which scenarios have actually been hit so you know when random testing has "closed."
+
+### Q3. When would you pick directed over random?
+For basic sanity/bring-up tests, reset behavior, or reproducing a very specific known bug scenario.
+
+## Quick Revision
+
+```
+Directed = Test what you know
+Random   = Find unknown bugs
+Formal   = Prove required behavior
+```
+
+---
+
+# 3. Verification Plan for a New Feature/Block
+
+## Interview Question
+
+> "How would you create a verification plan for a new feature or block?"
+
+## Concept
+
+Same discipline as topic 1, applied specifically to a brand-new feature that has no prior test infrastructure — you need to build the plan from first principles based purely on the spec.
+
+## Problem / Motivation
+
+New features are the highest-risk area for bugs because there's no existing regression suite protecting them. A structured plan ensures nothing is verified only "by accident."
+
+## Flow / Architecture
+
+```
+Specification
+      ↓
+Feature Extraction
+      ↓
+Verification Scenarios
+      ↓
+Tests
+      ↓
+Checks
+      ↓
+Coverage
+      ↓
+Corner Cases
+```
+
+## Example
+
+**New Accelerator Feature**
+
+Step 1 — Understand spec: inputs, outputs, features, requirements, error cases.
+
+Step 2 — Feature extraction:
+- Configuration registers
+- Data processing
+- Status reporting
+- Interrupt generation
+
+Step 3 — Scenarios:
+
+| Feature | Scenario |
+|---|---|
+| Registers | Write register → Read back → Compare |
+| Data Processing | Send input → Process → Check output |
+| Interrupt | Operation complete → Check interrupt generated |
+
+Step 4 — Checking: Scoreboard (expected vs actual data), Assertions (protocol/timing rules).
+
+Step 5 — Coverage: Register access ✓, Data processing ✓, Interrupt ✓, Error cases ✓.
+
+Step 6 — Corner cases: reset during operation, invalid configuration, maximum values, simultaneous operations.
+
+## Interview Answer
+
+> "For a new feature, I first understand the specification, extract features, create verification scenarios, define checking mechanisms, add coverage goals, and identify corner cases before starting implementation."
+
+## Common Follow-up Questions
+
+### Q1. How is this different from verifying an existing block?
+There's no legacy regression suite or prior coverage database to build on — everything (tests, checkers, coverage model) must be created fresh, so early collaboration with the design/spec authors is critical to avoid ambiguity.
+
+### Q2. How early should verification planning start relative to RTL coding?
+As early as possible — ideally the vPlan is drafted in parallel with (or even before) RTL coding so bugs in the spec itself are caught early.
+
+### Q3. What's the risk of skipping corner-case identification up front?
+Corner cases (reset-mid-operation, boundary values, simultaneous ops) are exactly where real silicon bugs hide; skipping them up front means they're found late — or in the field.
+
+## Quick Revision
+
+```
+Specification → Features → Scenarios → Tests → Checks → Coverage → Corner Cases
+```
+
+---
+
+# 4. Simulation vs Emulation vs FPGA Prototyping
+
+## Interview Question
+
+> "Why do we need simulation, emulation, and FPGA prototyping? Explain the difference."
+
+## Concept
+
+Three verification execution platforms exist because there's a fundamental tradeoff between **speed**, **debug visibility**, and **hardware accuracy** — no single platform maximizes all three.
+
+## Problem / Motivation
+
+RTL simulation gives perfect visibility but is far too slow to boot an OS or run real firmware. Real silicon is fast but doesn't exist yet and offers almost no debug visibility. Emulation and FPGA prototyping sit in between, trading some visibility for speed so software/firmware can be tested before tape-out.
+
+## Flow / Architecture
+
+### 1. Simulation
+Runs RTL on a software simulator (VCS, Questa, Xcelium).
+```
+RTL Design → Simulator → Simulation Results
+```
+**Advantages:** highest debug visibility, easy waveform/assertion debugging, best for RTL correctness.
+**Limitations:** slow for large designs, can't run long software workloads.
+**Used for:** block-level verification, RTL debugging, protocol/assertion checking.
+
+### 2. Emulation
+Runs RTL on specialized hardware that mimics the final chip.
+```
+RTL Design → Emulation Platform → System Testing
+```
+**Advantages:** much faster than simulation, can run real software, good for large SoC verification.
+**Limitations:** expensive, less debug visibility than simulation.
+**Used for:** firmware testing, large SoC verification, HW/SW integration.
+
+### 3. FPGA Prototyping
+RTL implemented on an FPGA board.
+```
+RTL Design → FPGA Hardware → Real Hardware Execution
+```
+**Advantages:** fastest execution, closest to real silicon, good for performance testing.
+**Limitations:** difficult debugging, FPGA behavior can differ from ASIC.
+
+## Comparison
+
+| | Simulation | Emulation | FPGA Prototype |
+|---|---|---|---|
+| Speed | Slow | Medium | Fast |
+| Debug Visibility | Highest | Medium | Lowest |
+| Hardware Accuracy | Low | Medium | Highest |
+| Software Testing | Limited | Good | Excellent |
+
+## Example
+
+A new accelerator block: RTL correctness (does the FSM transition correctly?) is verified in **simulation**. Once stable, booting the accompanying firmware driver against the block is done in **emulation** (too slow in simulation, RTL not on silicon yet). Finally, real-world performance/throughput numbers are gathered on an **FPGA prototype** before committing to tape-out.
+
+## Interview Answer
+
+> "Simulation provides maximum debug visibility but is slow. Emulation provides faster system-level testing, and FPGA prototyping provides the fastest execution and closest behavior to real silicon."
+
+## Common Follow-up Questions
+
+### Q1. Why not just use FPGA prototyping for everything?
+Debug visibility is very limited (you can't easily dump internal waveforms), and building/updating FPGA prototypes for every RTL change is slow and costly compared to simulation.
+
+### Q2. When would you choose emulation over simulation?
+When you need to run real firmware/OS-level software against the RTL, which would take impractically long in a software simulator.
+
+### Q3. Does FPGA behavior always match ASIC behavior?
+No — timing characteristics, and sometimes even certain primitives, can differ, so FPGA results still need correlation back against ASIC timing/synthesis results.
+
+## Quick Revision
+
+```
+Simulation    → Best Debug
+Emulation     → Faster System Testing
+FPGA Prototype → Fastest Hardware Testing
+```
+
+---
+
+# 5. Co-simulation (RTL + Firmware)
+
+## Interview Question
+
+> "How would you validate that firmware and RTL behave consistently for a new feature?"
+
+## Concept
+
+Co-simulation runs **firmware** and **RTL hardware** together in the same environment so that hardware/software interaction bugs are found before silicon, instead of during board bring-up.
+
+## Problem / Motivation
+
+Firmware is written against an assumed hardware contract (register map, bit definitions, reset values, timing). If firmware and RTL diverge from that shared contract, integration bugs appear — often very late and very expensive to fix (post-silicon). Co-simulation catches this early.
+
+## Flow / Architecture
+
+```
+Firmware
+   ↓
+Register Access
+   ↓
+RTL Hardware
+   ↓
+Status / Interrupt
+   ↓
+Firmware Response
+```
+
+## Verification Points
+
+| # | Area | What to Check |
+|---|---|---|
+| 1 | Register Map | Addresses, names, bit positions, R/W permissions |
+| 2 | Bit Definitions | Firmware and RTL agree on bit meanings |
+| 3 | Reset Values | Hardware state after reset == firmware expectation |
+| 4 | Data Flow | Firmware send → RTL process → Firmware receive |
+| 5 | Interrupt Handling | RTL completes → interrupt fires → firmware handles it |
+| 6 | Timing / Performance | Latency, throughput, completion time |
+
+## Example
+
+Firmware expects `CONTROL register = 0x1000` with `Bit 0 = START`, `Bit 1 = RESET`. RTL must implement the register at the exact same address with the exact same bit semantics. After reset, firmware expects `STATUS.DONE = 0` — this is checked directly against RTL's post-reset state in the co-simulation environment before any silicon exists.
+
+## Common HW/SW Bugs Found This Way
+
+- Register mismatch
+- Incorrect bit definitions
+- Wrong reset values
+- Interrupt issues
+- Data format mismatch
+
+## Interview Answer
+
+> "Co-simulation validates firmware and RTL consistency by running software with the hardware model. I verify the hardware-software contract including registers, bit definitions, reset values, data flow, interrupts, and performance requirements."
+
+## Common Follow-up Questions
+
+### Q1. Why not just test firmware on real silicon directly?
+By the time silicon exists, fixing an RTL bug means a costly and slow re-spin; co-simulation finds HW/SW contract mismatches while RTL can still be changed cheaply.
+
+### Q2. What's the biggest source of HW/SW bugs in practice?
+Register map / bit-definition mismatches between the hardware spec and what firmware engineers implemented against — often due to late spec changes not being propagated.
+
+### Q3. How does this differ from plain RTL simulation?
+Plain RTL simulation uses testbench-generated stimulus; co-simulation replaces (or supplements) that stimulus with real firmware/software driving the RTL through its actual register interface.
+
+## Quick Revision
+
+```
+Register Map → Bit Definitions → Reset Values → Data Flow → Interrupt Handling → Timing/Performance
+```
+
+---
+
+# 6. uvm_config_db vs uvm_resource_db
+
+## Interview Question
+
+> "What is the difference between uvm_config_db and uvm_resource_db? Which one is preferred?"
+
+## Concept
+
+Both mechanisms let UVM components share data (virtual interfaces, configuration objects, parameters) without hard-coded connections, but they differ in how that data is scoped and looked up.
+
+## Problem / Motivation
+
+Testbenches are deeply hierarchical (test → env → agent → driver). Hard-wiring handles between components breaks reuse. `uvm_config_db` (and, less commonly, `uvm_resource_db`) solve this by letting a parent "set" a value that any descendant can "get," without either side knowing about the other's exact class.
+
+## Flow / Architecture
+
+### uvm_config_db
+Passes configuration information down the UVM hierarchy.
+
+```
+Test → Environment → Agent → Driver
+```
+
+```systemverilog
+// Setting a virtual interface (typically in the test or top module)
+uvm_config_db #(virtual interface_type)::set(
+    this,
+    "*",
+    "vif",
+    vif
+);
+
+// Getting it inside a component (e.g., the driver)
+uvm_config_db #(virtual interface_type)::get(
+    this,
+    "",
+    "vif",
+    vif
+);
+```
+
+### uvm_resource_db
+A global resource pool, not scoped by hierarchy — used less frequently in normal UVM environments.
+
+## Comparison
+
+| | uvm_config_db | uvm_resource_db |
+|---|---|---|
+| Purpose | Configuration passing | Resource sharing |
+| Hierarchy-aware | Yes | No |
+| Usage | Very common | Less common |
+| Preferred | Yes | Usually not preferred |
+
+## Example
+
+A `virtual axi_if` is created once in the top-level testbench module and pushed via `uvm_config_db::set()` at `this` scope with wildcard `"*"`. Every agent/driver/monitor beneath it can then `get()` that same interface handle without any of them needing a global variable or a manually wired connection.
+
+## Interview Answer
+
+> "uvm_config_db is preferred because it follows UVM hierarchy and is designed for passing configuration information between components. uvm_resource_db is a more general global resource database and is less commonly used."
+
+## Common Follow-up Questions
+
+### Q1. Why is hierarchy-awareness important here?
+It lets you scope overrides precisely (e.g., set a different virtual interface for just one agent instance) instead of every component in the testbench seeing the same global value.
+
+### Q2. What happens if `get()` is called before the matching `set()`?
+The get typically fails/returns a null or default handle — ordering matters, which is why `set()` calls are usually done early, in `build_phase` of a parent, before children build.
+
+### Q3. Can `uvm_config_db` be used for more than virtual interfaces?
+Yes — it's commonly used for any configuration object: agent configs, `is_active` flags, coverage-enable switches, etc.
+
+## Quick Revision
+
+```
+uvm_config_db   = Hierarchical Configuration
+uvm_resource_db = Global Resource Sharing
+```
+
+---
+
+# 7. UVM Factory — new() vs type_id::create(), Type Override vs Instance Override
+
+## Interview Question
+
+> "Why do we use type_id::create() instead of new()? Explain type override and instance override."
+
+## Concept
+
+The UVM factory is a registration/creation mechanism that lets the testbench create objects **indirectly**, so that the actual class instantiated can be swapped later without touching existing testbench code.
+
+## Problem / Motivation
+
+If components are created with plain `new()`, changing behavior (e.g., swapping in a debug driver) means editing and recompiling the environment code everywhere that class is instantiated. The factory decouples "what gets created" from "where it's requested," enabling reuse across many tests/configurations.
+
+## Flow / Architecture
+
+### new() — direct creation
+```systemverilog
+packet pkt;
+pkt = new();
+```
+Fixed class type; cannot be overridden.
+
+### type_id::create() — factory-based creation
+```systemverilog
+driver_handle = driver::type_id::create("driver_instance", this);
+```
+```
+Request driver object
+      ↓
+Factory checks override
+      ↓
+Create required class
+```
+If no override exists → normal object created. If an override exists → replacement class created instead, with **zero changes** to the requesting code.
+
+### Type Override
+Replaces **every** instance of a class with another class, testbench-wide.
+```
+env
+├── agent1 → driver   ┐
+└── agent2 → driver   ┘  → both become debug_driver
+```
+Use case: globally enable a debug driver across the whole environment.
+
+### Instance Override
+Replaces **only one specific instance** in the hierarchy.
+```
+agent1.driver → debug_driver
+agent2.driver → normal_driver   (unchanged)
+```
+Use case: change behavior for just one agent (e.g., inject errors only on one interface).
+
+## Comparison
+
+| | Type Override | Instance Override |
+|---|---|---|
+| Scope | All instances | One instance |
+| Usage | Global change | Specific component change |
+| Example | Replace all drivers | Replace one agent's driver |
+
+## Code Example
+
+```systemverilog
+// Base driver class
+class normal_driver extends uvm_driver;
+    function new(string name = "normal_driver",
+                 uvm_component parent = null);
+        super.new(name, parent);
+    endfunction
+endclass
+
+// Replacement (debug) driver class
+class debug_driver extends normal_driver;
+    function new(string name = "debug_driver",
+                 uvm_component parent = null);
+        super.new(name, parent);
+    endfunction
+endclass
+
+// Agent using the factory to create the driver
+class my_agent extends uvm_agent;
+    normal_driver driver_handle;
+
+    function void build_phase(uvm_phase phase);
+        driver_handle = normal_driver::type_id::create("driver_handle", this);
+    endfunction
+endclass
+
+// In the test, override globally (type override):
+//   set_type_override_by_type(normal_driver::get_type(), debug_driver::get_type());
+//
+// Or override just one instance (instance override):
+//   set_inst_override_by_type("env.agent1.driver_handle",
+//                               normal_driver::get_type(), debug_driver::get_type());
+```
+
+## Interview Answer
+
+> "new() creates a fixed object directly. type_id::create() uses the UVM factory, which allows class replacement through overrides. Type override replaces all instances of a class, while instance override replaces only a specific component in the hierarchy."
+
+## Common Follow-up Questions
+
+### Q1. Where should overrides be set?
+Typically in the test's `build_phase`, before the environment builds its sub-components, so the override is in place when `create()` is called.
+
+### Q2. Why must factory-created classes be registered?
+Because the factory needs to know how to construct them by name/type — done via `` `uvm_component_utils(class_name) `` or `` `uvm_object_utils(class_name) ``.
+
+### Q3. Can instance override and type override coexist?
+Yes, and instance override takes precedence over a type override for that specific instance.
+
+## Quick Revision
+
+```
+new()              → Fixed object
+type_id::create()  → Factory object
+Type override      → Replace all
+Instance override  → Replace one
+```
+
+---
+
+# 8. TLM Communication — put_port, get_port, analysis_port
+
+## Interview Question
+
+> "Explain TLM communication in UVM. What are put_port, get_port, and analysis_port used for?"
+
+## Concept
+
+TLM (Transaction Level Modeling) lets UVM components exchange whole **transaction objects** (e.g., a packet with address/data fields) instead of wiggling individual signals, greatly simplifying testbench communication.
+
+## Problem / Motivation
+
+Signal-level communication between components is brittle and low-level. TLM ports abstract this into simple `put()`/`get()`/`write()` calls on transaction handles, so components stay loosely coupled and reusable.
+
+## Flow / Architecture
+
+### put_port — send transactions
+```
+Producer → put() → Consumer
+```
+```systemverilog
+put_port.put(transaction);
+```
+
+### get_port — receive transactions
+```
+Producer → Consumer → get()
+```
+```systemverilog
+get_port.get(transaction);
+```
+
+### analysis_port — broadcast transactions
+Commonly used by monitors to fan a transaction out to multiple subscribers at once.
+```
+Monitor → analysis_port.write(transaction) → Scoreboard
+                                            → Coverage Collector
+```
+
+## Why Scoreboards Use analysis_port Specifically
+
+1. **Broadcast** — one monitor can feed many components (scoreboard, coverage collector, protocol checker) simultaneously.
+2. **Decoupling** — the monitor doesn't know or care who's listening or how many listeners exist.
+3. **Non-blocking** — the monitor fires `write()` and continues immediately; it never waits on the scoreboard to finish processing.
+
+## Code Example
+
+```systemverilog
+// Monitor: observes DUT and broadcasts each transaction
+class bus_monitor extends uvm_monitor;
+    uvm_analysis_port #(bus_packet) mon_analysis_port;
+
+    function new(string name = "bus_monitor", uvm_component parent = null);
+        super.new(name, parent);
+        mon_analysis_port = new("mon_analysis_port", this);
+    endfunction
+
+    task run_phase(uvm_phase phase);
+        bus_packet observed_pkt;
+        observed_pkt = new();
+        // ... sample DUT signals into observed_pkt ...
+        mon_analysis_port.write(observed_pkt);
+    endtask
+endclass
+
+// Scoreboard: subscribes via the analysis export/imp
+class bus_scoreboard extends uvm_scoreboard;
+    // write() is the implementation callback invoked on every broadcast
+    function void write(bus_packet received_pkt);
+        // Compare received_pkt against the expected model
+    endfunction
+endclass
+```
+
+## Interview Answer
+
+> "TLM allows UVM components to communicate using transactions instead of signals. put_port pushes transactions, get_port retrieves transactions, and analysis_port broadcasts transactions to multiple subscribers. Monitors commonly use analysis ports to send transactions to scoreboards and coverage collectors."
+
+## Common Follow-up Questions
+
+### Q1. Why doesn't the monitor use put_port instead of analysis_port?
+`put_port` implies a single, blocking producer→consumer relationship; a monitor needs to feed multiple independent subscribers without blocking, which is exactly what `analysis_port` provides.
+
+### Q2. What's on the receiving side of an analysis_port?
+An `uvm_analysis_imp` (or `uvm_subscriber`), which implements the `write()` function that gets called for every broadcast transaction.
+
+### Q3. Can a scoreboard have more than one analysis export?
+Yes — e.g., separate exports for "expected" transactions (from a reference model) and "actual" transactions (from a monitor), which are then compared internally.
+
+## Quick Revision
+
+```
+put_port      = Send transaction
+get_port      = Receive transaction
+analysis_port = Broadcast transaction
+```
+
+---
+
+# 9. Sequence → Sequencer → Driver Flow
+
+## Interview Question
+
+> "Explain how a sequence delivers stimulus to the driver. Difference between start_item()/finish_item() and the uvm_do macro?"
+
+## Concept
+
+UVM stimulus generation follows a strict layered flow so that transaction *generation* (sequence) is cleanly separated from *arbitration* (sequencer) and *pin-level driving* (driver).
+
+## Problem / Motivation
+
+Mixing stimulus generation and signal driving in one place makes testbenches hard to reuse across different tests. Splitting the responsibilities lets you reuse the same driver/sequencer under many different sequences (different test scenarios) without touching driver code.
+
+## Flow / Architecture
+
+```
+Sequence → Sequencer → Driver → DUT
+```
+
+- **Sequence** — creates transactions (e.g., a Write Transaction with Address = 100, Data = 50). It never drives DUT pins directly.
+- **Sequencer** — the communication layer between sequence and driver; controls *when* a transaction is handed to the driver.
+- **Driver** — converts a transaction into actual DUT signal wiggles (e.g., `address_bus = 100; data_bus = 50; write_enable = 1;`).
+
+```
+Sequence creates transaction
+      ↓
+Sequencer stores/arbitrates transaction
+      ↓
+Driver requests transaction
+      ↓
+Driver drives DUT signals
+      ↓
+DUT responds
+```
+
+## start_item() / finish_item()
+
+- `start_item(packet_obj)` — begins the transaction handshake ("I want to send this transaction").
+- Randomization normally happens *between* `start_item` and `finish_item`.
+- `finish_item(packet_obj)` — completes generation and actually sends the transaction to the sequencer.
+
+## uvm_do Macro
+
+A shortcut that performs create + randomize + start_item + finish_item in one call.
+
+## Code Example
+
+```systemverilog
+// Explicit control using start_item / finish_item
+class write_sequence extends uvm_sequence #(packet);
+    `uvm_object_utils(write_sequence)
+
+    function new(string name = "write_sequence");
+        super.new(name);
+    endfunction
+
+    task body();
+        packet packet_obj;
+        packet_obj = packet::type_id::create("packet_obj");
+
+        start_item(packet_obj);
+        packet_obj.randomize();
+        finish_item(packet_obj);
+    endtask
+endclass
+
+// Equivalent shortcut using uvm_do
+// `uvm_do(packet_obj)
+// is equivalent to:
+//   packet_obj = packet::type_id::create("packet_obj");
+//   start_item(packet_obj);
+//   packet_obj.randomize();
+//   finish_item(packet_obj);
+```
+
+## Comparison
+
+| | start_item / finish_item | uvm_do |
+|---|---|---|
+| Control | More control | Less control |
+| Debug | Easier | Harder |
+| Randomization | Manual (can add extra constraints inline) | Automatic |
+| Usage | Preferred in many modern environments | Quick stimulus generation |
+
+## Interview Answer
+
+> "A sequence creates transactions and sends them to the sequencer. The sequencer controls transaction flow to the driver. The driver converts transactions into DUT signals. start_item() and finish_item() provide more control over transaction generation, while uvm_do is a shortcut macro that creates, randomizes, and sends transactions automatically."
+
+## Common Follow-up Questions
+
+### Q1. Why is start_item/finish_item generally preferred over uvm_do today?
+It gives explicit control over exactly when randomization happens and lets you inline additional constraints or pre/post-randomize logic between the two calls — easier to debug and extend.
+
+### Q2. What does the driver do while waiting for a transaction?
+It typically calls `seq_item_port.get_next_item()`, blocks until the sequencer hands it one, drives the DUT, then calls `seq_item_port.item_done()`.
+
+### Q3. Can multiple sequences run on the same sequencer?
+Yes — the sequencer arbitrates between them (e.g., via priority or round-robin), which is one reason the sequencer layer exists separately from the driver.
+
+## Quick Revision
+
+```
+Sequence     = Creates transaction
+Sequencer    = Controls transaction flow
+Driver       = Drives DUT
+start_item() = Start transaction
+finish_item()= Send transaction
+uvm_do       = create + randomize + send
+```
+
+---
+
+# 10. Virtual Sequence / Virtual Sequencer
+
+## Interview Question
+
+> "What is a virtual sequence and virtual sequencer? Why are they needed?"
+
+## Concept
+
+A **virtual sequencer** coordinates multiple *real* sequencers (one per interface/agent), and a **virtual sequence** coordinates multiple *real* sequences across those interfaces — together they enable synchronized, system-level test scenarios.
+
+## Problem / Motivation
+
+Complex SoCs have multiple interfaces (AXI, PCIe, UART, DMA...), each with its own agent and sequencer. Without coordination, each interface's stimulus runs independently, making it impossible to express scenarios like "start a DMA transfer *while* an interrupt is expected on another interface." Virtual sequences solve this.
+
+## Flow / Architecture
+
+```
+CPU → AXI → DMA → Memory
+```
+
+```
+Virtual Sequencer
+        |
+ -------------------
+ |        |         |
+AXI     PCIe      UART
+Sequencer Sequencer Sequencer
+```
+
+A virtual sequence coordinates, for example:
+```
+Start AXI write sequence
+Start DMA sequence
+Start interrupt sequence
+```
+
+Full path for one branch:
+```
+Virtual Sequence → Virtual Sequencer → AXI Sequencer → AXI Driver → DUT
+```
+and in parallel:
+```
+Virtual Sequence → UART Sequencer → UART Driver → DUT
+```
+
+## Example
+
+A system-level test needs to verify that a DMA transfer completes correctly *and* that firmware receives the corresponding interrupt on a separate interrupt line. A virtual sequence starts the DMA sequence on the DMA agent's sequencer and, in parallel, starts a sequence on the interrupt-monitoring agent — all orchestrated from one top-level virtual sequence so the timing relationship between the two is controlled and deterministic.
+
+## Interview Answer
+
+> "A virtual sequencer controls multiple sequencers, and a virtual sequence coordinates multiple sequences to create system-level scenarios. They are used when a design contains multiple interfaces that need synchronized stimulus."
+
+## Common Follow-up Questions
+
+### Q1. Does the virtual sequencer drive DUT signals itself?
+No — it has no driver of its own; it purely coordinates the real sequencers underneath it, which drive their respective interfaces.
+
+### Q2. How does the virtual sequence get handles to the real sequencers?
+Typically via `uvm_config_db` (or direct handle assignment in the environment's `build_phase`/`connect_phase`), so the virtual sequence can call `.start()` on each real sequencer.
+
+### Q3. When would you *not* need a virtual sequence?
+For single-interface, block-level verification — virtual sequences add value primarily in multi-interface, system/SoC-level scenarios.
+
+## Quick Revision
+
+```
+Virtual Sequence   = Controls multiple sequences
+Virtual Sequencer  = Controls multiple sequencers
+Used for: Multi-interface SoC verification
+```
+
+---
+
+# 11. UVM Objections
+
+## Interview Question
+
+> "Why does UVM need objections to know when simulation should end?"
+
+## Concept
+
+UVM has no built-in notion of "the test is still doing something" — **objections** are the explicit mechanism components use to tell the simulation phase manager to keep running or that it's safe to finish.
+
+## Problem / Motivation
+
+Without objections, `run_phase` (and other run-time phases) would appear "empty" the instant it starts, and UVM would end the simulation before any sequence has a chance to execute.
+
+## Flow / Architecture
+
+- `raise_objection()` — "I am still doing work, do not end simulation."
+- `drop_objection()` — "My work is complete, simulation can continue [to the next phase]."
+
+```
+run_phase starts
+      ↓
+No objection raised
+      ↓
+UVM thinks test is finished
+      ↓
+Simulation ends early
+```
+
+## Code Example
+
+```systemverilog
+task run_phase(uvm_phase phase);
+    phase.raise_objection(this);
+
+    my_sequence.start(my_sequencer);
+
+    phase.drop_objection(this);
+endtask
+```
+
+## Why Used in run_phase specifically?
+
+Because `run_phase` is where sequences, transactions, and DUT activity actually happen — these all require simulated time to complete, and objections keep that time "alive" until the work is truly done.
+
+## Interview Answer
+
+> "UVM objections control simulation ending. Components raise objections when they start activity and drop them when finished. Simulation continues while objections exist and ends when all objections are dropped."
+
+## Common Follow-up Questions
+
+### Q1. What happens if you raise an objection but forget to drop it?
+The simulation hangs forever in that phase (or times out), since UVM is waiting for all outstanding objections to be dropped.
+
+### Q2. Can multiple components raise objections at the same time?
+Yes — objections are reference-counted; the phase only ends once *every* raised objection has been dropped.
+
+### Q3. Is `raise_objection`/`drop_objection` used outside `run_phase`?
+It can be used in any runtime phase (e.g., `main_phase`, `reset_phase` in the UVM phase schedule) wherever that phase needs to stay alive for ongoing activity.
+
+## Quick Revision
+
+```
+raise_objection() = Keep simulation running
+drop_objection()  = Allow simulation to finish
+```
+
+---
+
+# 12. Designing a UVM Testbench for a Given Design
+
+## Interview Question
+
+> "Design a UVM testbench for a given design. What components will you create and what corner cases will you test?"
+
+## Problem
+
+The interviewer is checking your UVM architecture knowledge, verification planning ability, and corner-case thinking, usually against a simple example design (FIFO, RAM, a small protocol block).
+
+## Approach
+
+1. Understand the design's spec/features.
+2. Lay out the standard UVM architecture (test → env → agent → sequencer/driver/monitor → scoreboard/coverage).
+3. Map each feature to a sequence + check.
+4. Enumerate corner cases explicitly.
+
+## Architecture
+
+```
+                 Test
+                  |
+                 Env
+                  |
+                Agent
+        ---------------------
+        |        |          |
+   Sequencer  Driver    Monitor
+                              |
+                         Scoreboard
+                              |
+                          Coverage
+```
+
+## Component Responsibilities
+
+| Component | Responsibility |
+|---|---|
+| Sequence | Generates transactions (e.g., "Write Data = 50") |
+| Sequencer | Controls transaction flow: Sequence → Sequencer → Driver |
+| Driver | Converts transactions into DUT signals (Address=100, Data=50 → `address_bus`, `data_bus`) |
+| Monitor | Observes DUT signals passively — never drives |
+| Scoreboard | Compares Expected vs Actual |
+| Coverage | Measures whether important scenarios were tested |
+
+## Example: FIFO Verification
+
+**Features:** Write, Read, Full, Empty, Reset.
+
+**Corner Cases:**
+
+```
+Full FIFO         → try write  → expect: write blocked
+Empty FIFO        → try read   → expect: no valid data
+Reset mid-write    → expect: FIFO cleared
+Back-to-back A,B,C → expect: correct ordering, no data loss
+```
+
+## Interview Answer
+
+> "For a design, I would create an environment containing an agent, scoreboard, and coverage. The agent contains a sequencer, driver, and monitor. The sequence generates transactions, the driver drives the DUT, and the monitor observes outputs. The scoreboard checks correctness, and coverage measures verification completeness. Finally, I test normal operation and corner cases such as reset, boundary conditions, and invalid operations."
+
+## Quick Revision
+
+```
+Sequence   = Creates
+Sequencer  = Controls
+Driver     = Drives
+Monitor    = Observes
+Scoreboard = Checks
+Coverage   = Measures
+```
+
+---
+
+# 13. Code Coverage vs Functional Coverage
+
+## Interview Question
+
+> "What is the difference between code coverage and functional coverage? Why do we need both?"
+
+## Concept
+
+These answer two different questions:
+
+- **Functional coverage** — "Did we test all required behaviors from the specification?"
+- **Code coverage** — "Did our tests execute all parts of the RTL code?"
+
+## Functional Coverage
+
+Checks whether important design scenarios *from the specification* were exercised. It's hand-written by the verification engineer (via `covergroup`/`coverpoint`).
+
+**Example — AXI Slave spec features:** AXI Read, AXI Write, Register Access, Memory Access, Interrupt → functional coverage confirms each was tested at least once.
+
+**Important limitation:** functional coverage does NOT check correctness. "Write operation happened" ≠ "data was stored correctly" — that's the scoreboard's/assertion's job.
+
+## Code Coverage
+
+Checks how much of the RTL implementation was *executed*, usually collected automatically by the simulator.
+
+| Type | Checks |
+|---|---|
+| Statement | Did every RTL line execute? |
+| Branch | Did all decision paths (if/else) execute? |
+| Toggle | Did every signal transition 0→1 and 1→0? |
+| FSM | Did all states and transitions occur? |
+
+## Main Difference
+
+| | Functional Coverage | Code Coverage |
+|---|---|---|
+| Checks | Design behavior | RTL execution |
+| Based on | Specification | Implementation |
+| Created by | Verification engineer | Tool (automatic) |
+| Answers | Did we test the feature? | Did the code execute? |
+
+## Why Both Are Needed
+
+**Case 1 — high code coverage, low functional coverage:** 95% of RTL lines executed, but the interrupt feature was never actually triggered (functional coverage = 0% for interrupt) → an entire feature is unverified despite "good" code coverage.
+
+**Case 2 — high functional coverage, low code coverage:** every spec feature (Read/Write/Interrupt/Registers) tested = 100% functional coverage, but some RTL error-handling branch was never executed (80% code coverage) → an implementation path is untested and could hide a bug.
+
+## Interview Answer
+
+> "Functional coverage checks whether required behaviors and scenarios from the specification were tested. Code coverage checks whether the RTL implementation was exercised. Both are required because high code coverage does not guarantee all features were verified, and high functional coverage does not guarantee all RTL paths were executed."
+
+## Common Follow-up Questions
+
+### Q1. Who writes functional coverage, and how?
+The verification engineer, typically using SystemVerilog `covergroup`/`coverpoint`/`cross` constructs tied to the DUT spec's features and cross-combinations.
+
+### Q2. Does 100% code coverage mean the design is bug-free?
+No — it only means every line/branch/toggle executed at some point; it says nothing about whether the *results* produced were correct.
+
+### Q3. What's cross coverage and why use it?
+Coverage of *combinations* of coverpoints (e.g., READ+BURST, WRITE+SINGLE) — important because bugs often hide specifically in the interaction of two features, not either alone.
+
+## Quick Revision
+
+```
+Functional Coverage → Specification based → Did we test features?
+Code Coverage       → RTL based           → Did code execute?
+Scoreboard          → Was result correct?
+```
+
+---
+
+# 14. Coverage Closure and Verification Completion Criteria
+
+## Interview Question
+
+> "How do you decide when verification is complete?"
+
+## Concept
+
+Passing tests alone does **not** mean verification is complete. Completion is a composite judgment based on coverage, bug trends, and stability — not any single metric in isolation.
+
+## Flow / Architecture
+
+```
+Run Tests
+      ↓
+Collect Coverage
+      ↓
+Analyze Missing Coverage
+      ↓
+Add Tests
+      ↓
+Fix Bugs
+      ↓
+Regression
+      ↓
+Coverage Closure
+```
+
+## Closure Dimensions
+
+**Functional Coverage Closure** — "Did we test all required behaviors?" (e.g., AXI Slave: Read ✓, Write ✓, Register Access ✓, Memory Access ✓, Interrupt ✓, Error Response ✓)
+
+**Code Coverage Closure** — statement, branch, toggle, FSM coverage all meeting target thresholds.
+
+**Assertion Closure** — protocol/design rules passing (e.g., AXI: `VALID` must remain stable until `READY`).
+
+**Bug Closure** — critical and major bugs fixed; remaining low-severity issues reviewed and consciously accepted or deferred.
+
+**Bug-Rate Flattening** — the rate of *new* bugs found trends toward zero over successive regression cycles, signaling design stability:
+
+| Week | New Bugs Found |
+|---|---|
+| Week 1 | 50 |
+| Week 2 | 20 |
+| Week 3 | 5 |
+| Week 4 | 0–1 |
+
+## Verification Completion Criteria (Checklist)
+
+- ✓ Functional coverage goals achieved
+- ✓ Code coverage goals achieved
+- ✓ Assertions passing
+- ✓ Important bugs closed
+- ✓ Regression stable
+- ✓ Corner cases tested
+- ✓ Bug discovery rate flattened
+
+## Interview Answer
+
+> "Verification is complete when coverage goals are achieved, assertions pass, critical bugs are closed, regression is stable, and the bug discovery rate has flattened. Coverage alone is not enough because we also need confidence that the design is stable."
+
+## Common Follow-up Questions
+
+### Q1. Why isn't 100% coverage sufficient on its own?
+Coverage only proves scenarios were *exercised*, not that results were *correct* in every case, and a coverage model itself can have blind spots (missed cross-combinations, missed corner cases).
+
+### Q2. What do you do if bug-rate isn't flattening even at high coverage?
+Investigate whether the coverage model is too shallow (missing important scenarios/crosses) or whether there's a systemic RTL issue causing repeated related bugs.
+
+### Q3. How do "must-have" vs "nice-to-have" coverage goals get decided?
+Usually agreed upon during verification planning with design/architecture owners, prioritizing features by risk and criticality to the product.
+
+## Quick Revision
+
+```
+Tests → Coverage → Close Missing Areas → Fix Bugs → Stable Regression → Bug Rate Flattened → Verification Complete
+```
+
+---
+
+# 15. Assertion vs Scoreboard
+
+## Interview Question
+
+> "What is the difference between assertions and scoreboards? When do you use each?"
+
+## Concept
+
+Both check DUT correctness, but at different levels:
+
+```
+Assertion  → Protocol / Timing / Rules
+Scoreboard → Data / Transaction Correctness
+```
+
+## Assertion
+
+**Checks:** "Does the design follow a required rule?" — used for protocol checking, timing checking, control behavior.
+
+**Example — AXI handshake:** VALID should eventually get READY.
+```systemverilog
+assert property(
+    valid |-> ##[1:3] ready
+);
+```
+
+**Example — FIFO:** should never be read while empty.
+```systemverilog
+assert property(!(read && empty));
+```
+
+## Scoreboard
+
+**Checks:** "Is the output data correct?" — compares Expected Result vs Actual DUT Result.
+
+**Example:** Expected Read Data = 50, Actual Read Data = 50 → PASS.
+
+## Comparison
+
+| | Assertion | Scoreboard |
+|---|---|---|
+| Checks | Rules and timing | Data correctness |
+| Level | Signal level | Transaction level |
+| Best for | Protocol bugs | Functional bugs |
+
+## Can One Replace the Other?
+
+**Can assertion replace scoreboard?** No — an assertion can confirm the AXI handshake itself was correct, while the DUT still returns wrong *data*; only the scoreboard catches that.
+
+**Can scoreboard replace assertion?** No — a scoreboard may catch wrong data but miss that the response arrived *late*; that's a timing issue only an assertion catches.
+
+## Interview Answer
+
+> "Assertions check protocol, timing, and properties that must always be true. Scoreboards compare expected and actual transactions to verify functional correctness. Both are needed because they check different aspects of the design."
+
+## Common Follow-up Questions
+
+### Q1. Where do assertions typically live in the testbench/RTL?
+Often embedded directly in RTL (or bound in via `bind`) so they can check internal signals close to the point of failure, in addition to interface-level assertions in the testbench.
+
+### Q2. Do assertions run continuously or only at specific points?
+Continuously — they're evaluated every clock cycle (or on every relevant event) throughout the simulation, unlike a scoreboard which typically checks per-transaction.
+
+### Q3. Which is generally easier to debug when it fails, and why?
+Assertions are usually easier — a failure points directly to the exact signal/cycle and property violated, whereas a scoreboard mismatch requires backtracking through the transaction path to find the root cause.
+
+## Quick Revision
+
+```
+Assertion  = Rule Checking
+Scoreboard = Result Checking
+```
+
+---
+
+# 16. Debugging a Failing Regression Test
+
+## Interview Question
+
+> "Walk me through how you would debug a failing regression test that you have never seen before."
+
+## Concept
+
+The goal is to find *where* behavior first became incorrect, and classify whether the root cause is in the **test**, the **testbench**, or the **DUT**.
+
+## Flow / Architecture
+
+```
+Regression Failure
+      ↓
+Collect Failure Information
+      ↓
+Reproduce Failure
+      ↓
+Analyze Logs
+      ↓
+Find First Failure Point
+      ↓
+Analyze Waveform
+      ↓
+Identify Root Cause
+      ↓
+Fix
+      ↓
+Run Regression Again
+```
+
+### Step 1 — Collect Failure Information
+Test name, random seed, error message, simulation time, assertion failure, scoreboard mismatch.
+```
+Test: axi_write_read_test
+Failure: Expected Data = 50, Actual Data = 0
+```
+
+### Step 2 — Reproduce the Failure
+For constrained-random tests, save and re-run the exact seed (e.g., `Seed = 12345`) so the failure becomes deterministic and repeatable.
+
+### Step 3 — Check Simulation Logs
+Sequence logs, driver logs, monitor logs, scoreboard logs, assertion messages.
+```
+Driver:  WRITE  Address=0x100  Data=50
+Monitor: READ   Address=0x100  Data=0
+```
+→ the problem lies somewhere between Driver → DUT → Monitor.
+
+### Step 4 — Find the First Failure Point
+Don't start from the final error message; trace back through `Sequence → Driver → DUT → Monitor → Scoreboard` to find where expected and actual first diverge.
+
+### Step 5 — Analyze Waveform
+Check the relevant handshake/data signals (e.g., AXI: `AWVALID/AWREADY`, `WVALID/WREADY`, `ARVALID/ARREADY`, `RVALID/RREADY`).
+- Did the driver send the correct request?
+- Did the DUT receive it (handshake completed: VALID=1, READY=1)?
+- Did the DUT produce the correct response (data, response code, timing)?
+
+### Step 6 — Identify Failure Category
+
+| Category | Example |
+|---|---|
+| DUT Bug | Driver sends Data=50, DUT stores 0 → RTL issue |
+| Testbench Bug | DUT output correct, but monitor captures wrong value → monitor issue |
+| Test Issue | Sequence generates an invalid transaction → test/constraint issue |
+
+## Example: AXI Failure Debug
+
+Failure: Expected Read Data=50, Actual Read Data=0.
+1. Reproduce with the saved seed.
+2. Check driver logs — write address=0x100, data=50 — driver is correct.
+3. Check waveform.
+4. Check DUT memory/register contents.
+5. Root cause found: address decoder mapped 0x100 incorrectly → RTL bug.
+6. Fix RTL, re-run the failing test, then run full regression.
+
+## Interview Answer
+
+> "When I see a regression failure, I first collect failure information including the test name, seed, logs, and error message. I reproduce the failure, analyze logs, and identify the first point where behavior becomes incorrect. Then I use waveform analysis to trace the transaction path from sequence, driver, DUT, monitor, and scoreboard. I determine whether the issue is in RTL, testbench, or test, fix the root cause, and rerun regression."
+
+## Common Follow-up Questions
+
+### Q1. Why is reproducing the failure important?
+Reproducing the same failure makes debugging deterministic and lets you validate the fix against the exact same scenario afterward.
+
+### Q2. How do you know if it's an RTL or testbench bug?
+Trace the transaction from driver to DUT to monitor and scoreboard to find where expected and actual behavior first differ — if the DUT's own internal state/output is already wrong, it's RTL; if DUT output is right but the checker reports it wrong, it's testbench.
+
+### Q3. Why use waveform analysis instead of just logs?
+Logs show high-level transaction information; waveforms show actual signal-level behavior and cycle-accurate timing that logs may abstract away.
+
+## Quick Revision
+
+```
+Failure → Reproduce → Check Logs → Find First Error → Waveform Analysis → DUT/Testbench/Test → Fix → Regression
+```
+```
+Reproduce → Trace → Isolate → Fix → Verify
+```
+
+---
+
+# 17. Firmware and RTL Consistency Validation
+
+## Interview Question
+
+> "How would you validate that firmware and RTL behave consistently for a new feature?"
+
+## Concept
+
+Firmware and RTL must agree on a shared hardware-software contract; validation means proving that firmware's expectations and RTL's actual implementation match, ideally *before* silicon.
+
+## Flow / Architecture
+
+```
+Firmware
+      ↓
+Hardware Interface Contract
+      ↓
+RTL Behavior
+      ↓
+Firmware Response
+```
+
+## What Needs to Be Verified
+
+1. **Register Map** — addresses, names, R/W permissions (e.g., firmware expects `CONTROL Register = 0x1000`; RTL must implement it at that same address).
+2. **Bit Definitions** — both sides agree on bit meanings (e.g., Bit 0 = START, Bit 1 = RESET).
+3. **Reset Values** — hardware state after reset matches firmware's expectation (e.g., `STATUS.DONE = 0` after reset).
+4. **Data Flow** — firmware sends data → RTL processes → firmware receives result; check data format, width, and correctness.
+5. **Interrupt Handling** — RTL operation completes → interrupt generated → firmware receives and handles it.
+6. **Timing / Performance** — latency, throughput, completion time.
+
+## Co-simulation
+
+Running firmware and RTL together to find hardware-software integration issues before silicon exists (see topic 5 for the full flow).
+
+## Common HW/SW Bugs
+
+- Register mismatch
+- Wrong bit definition
+- Incorrect reset value
+- Interrupt problems
+- Data format mismatch
+
+## Interview Answer
+
+> "To validate firmware and RTL consistency, I verify the hardware-software contract including register maps, bit definitions, reset values, data flow, interrupts, and timing. Then I run firmware with RTL using simulation or co-simulation to ensure both sides behave consistently."
+
+## Common Follow-up Questions
+
+### Q1. Who owns the "source of truth" for the register map?
+Ideally a single machine-readable spec (e.g., an IP-XACT or register-description file) that generates both the RTL register block and the firmware header files, minimizing drift between the two.
+
+### Q2. What's the risk of validating firmware/RTL only after tape-out?
+Any mismatch found post-silicon (e.g., a wrong reset value) may require a firmware workaround or, worst case, a costly re-spin — validating pre-silicon avoids this.
+
+### Q3. How is this different from general RTL functional verification?
+General RTL verification checks the DUT against the design spec in isolation; this specifically checks that real firmware, driving the DUT through its actual software interface, behaves as both sides expect.
+
+## Quick Revision
+
+```
+Register Map → Bit Definitions → Reset Values → Data Flow → Interrupt Handling → Timing/Performance
+```
+
+---
+
+# 18. RAM Verification Problem (Pre-Silicon & Post-Silicon)
+
+## Problem
+
+**"Given a RAM design with separate read/write control bits, what could cause the system to fail? Then design a pre-silicon and post-silicon test algorithm using write()/read() primitives."**
+
+## Approach
+
+1. Analyze the RAM's inputs/outputs and identify categories of failure.
+2. Design pre-silicon tests (simulation, full visibility) targeting each failure category.
+3. Design post-silicon tests (real hardware, `write()`/`read()` only, no internal visibility) targeting the same categories.
+
+## Example RAM Design
+
+```
+         CPU
+          |
+         RAM
+          |
+   Read / Write Data
+```
+
+Inputs: `address`, `write_enable`, `read_enable`, `write_data`. Output: `read_data`.
+
+## RAM Failure Analysis
+
+### 1. Timing Failure
+Setup/hold time violations, incorrect clock timing, read-latency mismatch.
+```
+Expected: Address stable, Data stable, Write enable stable → Clock edge → Write happens
+Failure:  Write enable changes too early → RAM misses the write
+```
+Example: spec says "read response after 1 cycle," RTL delivers it after 3 cycles → system-level failure.
+
+### 2. Address Decoding Failure
+Wrong memory location selected.
+```
+CPU writes Address=0x100, Data=50
+Expected: RAM[0x100] = 50
+Bug: address decoder selects RAM[0x101] instead
+Result: RAM[0x100] remains empty
+```
+Includes: wrong address mapping, address aliasing, multiple addresses selecting the same location.
+
+### 3. Read/Write Control Bit Misuse
+Correct usage: Write → `write_enable=1, read_enable=0`; Read → `write_enable=0, read_enable=1`.
+- **Both enabled simultaneously** → data corruption, undefined behavior.
+- **Read acts as write** → RTL bug modifies memory contents on what should be a passive read.
+
+## Debug Approach
+
+```
+Control Signals → Address → Data → Clock Timing → Memory Location
+```
+
+## Pre-Silicon Verification Algorithm
+
+Available: RTL simulation, waveforms, internal signals.
+
+**Test 1 — Basic Write/Read:**
+```
+For every address:
+    write(address, data)
+    read(address)
+    compare(expected, actual)
+```
+
+**Test 2 — Data Pattern Test:** write `00000000`, `11111111`, `10101010`, `01010101` to detect stuck-at faults and data corruption.
+
+**Test 3 — Address Decoder Test:** write address-as-data (`write(0,0); write(1,1); write(2,2);`) and verify each address reads back its own value, to detect wrong mapping/aliasing.
+
+## Post-Silicon Verification Algorithm
+
+Available: only `write()`/`read()` — no internal waveform visibility.
+
+**Test 1 — Read After Write:**
+```
+for every address:
+    write(address, pattern)
+    data = read(address)
+    compare(data, pattern)
+```
+
+**Test 2 — Address Uniqueness Test:** write distinct values to distinct addresses (`write(0,10); write(1,20); write(2,30);`) and confirm each address returns exactly its own value, to detect decoder faults.
+
+**Test 3 — March Test** (industry-standard): March Up (address 0 → max) and March Down (max → 0) sequences of read/write operations. Detects stuck-at faults, coupling faults, and address faults.
+
+## 32×32 DFF Memory — Additional Fault Types
+
+| Fault | Description |
+|---|---|
+| Stuck-at Fault | A bit is permanently stuck at SA0 or SA1 |
+| Transition Fault | A bit cannot transition 0→1 or 1→0 |
+| Address Decoder Fault | Wrong address selected (e.g., address 5 actually writes address 6) |
+| Coupling Fault | Changing one bit unintentionally affects another bit (e.g., bit 5 changes bit 6) |
+| Read/Write Fault | Problems with write enable, read enable, or data storage itself |
+
+**Detection patterns:** Zero pattern (`00000000`) detects stuck-at-1 faults; One pattern (`11111111`) detects stuck-at-0 faults; Checkerboard (`10101010` / `01010101`) detects bit/data/coupling faults; Address pattern (`Memory[i] = i`) detects address decoder faults.
+
+## Full Verilog Code
+
+```systemverilog
+// DUT: 32x32 RAM
+module ram_32x32(
+    input clk,
+    input write_enable_signal,
+    input [4:0] memory_address,
+    input [31:0] input_data,
+    output reg [31:0] output_data
+);
+
+reg [31:0] ram_storage [0:31];
+
+always @(posedge clk) begin
+    if (write_enable_signal)
+        ram_storage[memory_address] <= input_data;
+end
+
+always @(posedge clk) begin
+    output_data <= ram_storage[memory_address];
+end
+
+endmodule
+
+
+// Testbench
+module ram_test;
+
+reg clk;
+reg write_enable_signal;
+reg [4:0] memory_address;
+reg [31:0] input_data;
+wire [31:0] output_data;
+
+ram_32x32 dut(
+    .clk(clk),
+    .write_enable_signal(write_enable_signal),
+    .memory_address(memory_address),
+    .input_data(input_data),
+    .output_data(output_data)
+);
+
+always #5 clk = ~clk;
+
+// Drives a write transaction at the given address/data
+task write_memory;
+    input [4:0] target_address;
+    input [31:0] data_value;
+    begin
+        @(posedge clk);
+        write_enable_signal = 1;
+        memory_address = target_address;
+        input_data = data_value;
+    end
+endtask
+
+// Drives a read transaction at the given address
+task read_memory;
+    input [4:0] target_address;
+    begin
+        @(posedge clk);
+        write_enable_signal = 0;
+        memory_address = target_address;
+    end
+endtask
+
+integer location;
+
+initial begin
+    clk = 0;
+    write_enable_signal = 0;
+    memory_address = 0;
+    input_data = 0;
+
+    // Zero pattern test
+    for (location = 0; location < 32; location++)
+        write_memory(location, 32'h00000000);
+
+    for (location = 0; location < 32; location++) begin
+        read_memory(location);
+        @(posedge clk);
+        if (output_data != 32'h00000000)
+            $display("ZERO TEST FAIL %d", location);
+    end
+
+    // One pattern test
+    for (location = 0; location < 32; location++)
+        write_memory(location, 32'hFFFFFFFF);
+
+    for (location = 0; location < 32; location++) begin
+        read_memory(location);
+        @(posedge clk);
+        if (output_data != 32'hFFFFFFFF)
+            $display("ONE TEST FAIL %d", location);
+    end
+
+    // Address pattern test
+    for (location = 0; location < 32; location++)
+        write_memory(location, location);
+
+    for (location = 0; location < 32; location++) begin
+        read_memory(location);
+        @(posedge clk);
+        if (output_data != location)
+            $display("ADDRESS TEST FAIL %d", location);
+    end
+
+    $display("RAM TEST COMPLETE");
+    $finish;
+end
+
+endmodule
+```
+
+## Full C++ Code (Post-Silicon Style Model)
+
+```cpp
+#include <iostream>
+#include <cstdint>
+using namespace std;
+
+class RAM_32x32 {
+private:
+    uint32_t memory_array[32];
+
+public:
+    void write_memory(int address, uint32_t data) {
+        memory_array[address] = data;
+    }
+
+    uint32_t read_memory(int address) {
+        return memory_array[address];
+    }
+};
+
+int main() {
+    RAM_32x32 ram;
+    uint32_t read_value;
+
+    // Zero pattern test
+    for (int address = 0; address < 32; address++)
+        ram.write_memory(address, 0x00000000);
+
+    for (int address = 0; address < 32; address++) {
+        read_value = ram.read_memory(address);
+        if (read_value != 0x00000000)
+            cout << "ZERO TEST FAIL " << address << endl;
+    }
+
+    // One pattern test
+    for (int address = 0; address < 32; address++)
+        ram.write_memory(address, 0xFFFFFFFF);
+
+    for (int address = 0; address < 32; address++) {
+        read_value = ram.read_memory(address);
+        if (read_value != 0xFFFFFFFF)
+            cout << "ONE TEST FAIL " << address << endl;
+    }
+
+    // Address pattern test
+    for (int address = 0; address < 32; address++)
+        ram.write_memory(address, address);
+
+    for (int address = 0; address < 32; address++) {
+        read_value = ram.read_memory(address);
+        if (read_value != (uint32_t)address)
+            cout << "ADDRESS TEST FAIL " << address << endl;
+    }
+
+    cout << "RAM VERIFICATION COMPLETE" << endl;
+    return 0;
+}
+```
+
+## Interview Answer
+
+> "For RAM verification, I would first analyze possible failures such as timing problems, address decoding errors, and incorrect read/write control handling. For pre-silicon verification, I would use simulation-based tests with different data patterns, address tests, and assertions. For post-silicon validation, using write() and read() primitives, I would run memory tests such as read-after-write, address uniqueness tests, and March algorithms to detect memory faults."
+
+## Common Follow-up Questions
+
+### Q1. Why can't you just reuse the pre-silicon testbench for post-silicon?
+Post-silicon has no internal signal visibility — you're restricted to whatever black-box interface (like `write()`/`read()`) the real chip exposes, so tests must be redesigned around that constraint.
+
+### Q2. What's a coupling fault and why is it hard to catch with a simple write/read test?
+It's when writing one bit unintentionally corrupts another bit — a simple single-address read-after-write test can miss it because the corrupting write to a *different* address may not be checked immediately afterward; March tests are specifically designed to catch this.
+
+### Q3. Why use multiple data patterns instead of just one?
+Different patterns are sensitive to different fault types (all-zero catches stuck-at-1, all-one catches stuck-at-0, checkerboard catches adjacent-bit coupling) — one pattern alone leaves blind spots.
+
+## Quick Revision
+
+```
+RAM Failures: Timing → Address Decoding → Read/Write Control
+Verification: Write → Read → Compare
+Tests: Data patterns · Address patterns · March tests
+```
+
+---
+
+# 19. Google DV Interview Problem Examples
+
+## Problem 1: FIFO and Protocol Verification
+
+### Interview Scenario
+Candidate asked to design and verify FIFO/protocol modules, then debug failing simulations using waveform analysis.
+
+### Expected Approach
+```
+Specification → Feature Extraction → Verification Plan → UVM Environment → Tests → Scoreboard → Coverage → Debug Failures
+```
+
+**FIFO Features:** Write, Read, Full, Empty, Reset.
+**Corner Cases:** Write when full, Read when empty, Reset during operation, Back-to-back transactions.
+
+**Debug Flow:**
+```
+Failure → Reproduce → Check Logs → Waveform Analysis → Find First Failure → Root Cause → Fix → Regression
+```
+(See Topic 16 for the full debug methodology.)
+
+---
+
+## Problem 2: AXI / APB / UVM Coding Round
+
+### Interview Topics
+UVM phases, why AXI over APB, AXI-Lite vs AXI3, driver code, coverage class, cross coverage.
+
+### AXI vs APB
+
+**APB** — simple register access, low-speed peripherals.
+```
+CPU → APB → UART/GPIO
+```
+
+**AXI** — high-performance data transfer, memory access, DMA, accelerators. Features: burst transfers, multiple outstanding transactions, higher throughput.
+
+### AXI-Lite vs AXI3
+
+| | AXI-Lite | AXI3 |
+|---|---|---|
+| Purpose | Register access | Data transfer |
+| Burst | No | Yes |
+| Complexity | Simple | Higher |
+| Performance | Lower | Higher |
+
+### Driver Flow
+```
+Sequence → Sequencer → Driver → DUT
+```
+The driver gets a transaction, converts it to signals, and drives the interface. (See Topic 9 for full detail.)
+
+### Coverage Class
+Coverage checks "did we test important combinations?" e.g., for `Operation: READ/WRITE` crossed with `Burst: SINGLE/BURST`:
+```
+READ + SINGLE
+READ + BURST
+WRITE + SINGLE
+WRITE + BURST
+```
+Cross coverage specifically targets these *combinations*, since bugs often live in feature interactions rather than either feature alone.
+
+---
+
+## Problem 3: RAM Design Verification
+
+### Interview Scenario
+Given a RAM with read/write controls, find possible failures and design pre-/post-silicon algorithms.
+
+Covered: timing failures, address decoding failures, read/write misuse, `write()`/`read()`-based testing. (Full detail and code in Topic 18.)
+
+---
+
+## Problem 4: 32×32 DFF Memory Verification
+
+### Interview Scenario
+Given a 32×32 DFF memory block: (1) enumerate possible faults, (2) write verification code.
+
+**Possible Faults:**
+- Stuck-at fault (bit stuck at 0 or 1)
+- Transition fault (cannot transition 0→1 or 1→0)
+- Address decoder fault (wrong address selected)
+- Coupling fault (one bit affects another)
+- Read/write fault (write enable, read enable, or data storage issues)
+
+**Verification Tests:**
+- Zero pattern → detects stuck-at-1 faults
+- One pattern → detects stuck-at-0 faults
+- Checkerboard pattern (`10101010`/`01010101`) → detects bit/data faults
+- Address pattern (`Memory[i]=i`) → detects address decoder faults
+
+Full Verilog DUT+testbench and C++ reference-model code are provided in Topic 18, which cover exactly this fault set (Zero/One/Address pattern tests against a 32×32 memory).
+
+## Interview Answer
+
+> "For memory-style problems like this, I enumerate the standard fault model — stuck-at, transition, address decoder, coupling, and read/write faults — then design tests using targeted data patterns (zero, one, checkerboard, address-as-data) and, for larger memories, industry-standard March algorithms, applying the same read/write/compare structure whether I have simulation visibility (pre-silicon) or only black-box primitives (post-silicon)."
+
+## Quick Revision
+
+```
+Google DV recurring themes:
+FIFO/protocol design + waveform debugging
+AXI vs APB, AXI-Lite vs AXI3, driver/coverage coding
+RAM failure analysis + pre/post-silicon test design
+Memory fault models (stuck-at, transition, decoder, coupling, R/W) + pattern-based tests
+```
