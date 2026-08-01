@@ -1,0 +1,534 @@
+# Day 3 — UVM Deep Dive + DV Concepts + Coverage + Methodologies
+
+## Navigation
+
+1. [Verification Plan from Specification](#1-verification-plan-from-specification)
+2. [Constrained Random vs Directed vs Formal Verification](#2-constrained-random-vs-directed-vs-formal-verification)
+3. [Verification Plan for New Feature/Block](#3-verification-plan-for-new-featureblock)
+4. [Simulation vs Emulation vs FPGA Prototyping](#4-simulation-vs-emulation-vs-fpga-prototyping)
+5. [Co-simulation RTL + Firmware](#5-co-simulation-rtl--firmware)
+6. [uvm_config_db vs uvm_resource_db](#6-uvm_config_db-vs-uvm_resource_db)
+
+7. [UVM Factory](#7-uvm-factory)
+8. [TLM Communication](#8-tlm-communication)
+9. [Sequence Sequencer Driver Flow](#9-sequence--sequencer--driver-flow)
+10. [Virtual Sequence / Virtual Sequencer](#10-virtual-sequence--virtual-sequencer)
+11. [UVM Objections](#11-uvm-objections)
+12. [Design a UVM Testbench](#12-design-a-uvm-testbench)
+
+13. [Code Coverage vs Functional Coverage](#13-code-coverage-vs-functional-coverage)
+14. [Coverage Closure](#14-coverage-closure)
+15. [Assertion vs Scoreboard](#15-assertion-vs-scoreboard)
+16. [Debugging Regression Failure](#16-debugging-regression-failure)
+17. [Firmware and RTL Consistency Validation](#17-firmware-and-rtl-consistency-validation)
+18. [RAM Verification Problem](#18-ram-verification-problem)
+19. [Google DV Interview Problem Examples](#19-google-dv-interview-problem-examples)
+
+---
+
+
+# 1. Verification Plan from Specification
+
+## Interview Question
+"How would you build a verification plan from a design specification?"
+
+## Concept
+
+A verification plan converts the specification into:
+- Features to verify
+- Verification scenarios
+- Tests
+- Checking methods
+- Coverage goals
+- Corner cases
+
+## Verification Flow
+
+Specification
+↓
+Feature Extraction
+↓
+Verification Scenario
+↓
+Test Creation
+↓
+Scoreboard / Assertions
+↓
+Coverage
+↓
+Corner Cases
+↓
+Coverage Closure
+
+
+## Example: FIFO
+
+Specification:
+
+FIFO supports:
+- Write
+- Read
+- Full
+- Empty
+- Reset
+
+
+Feature Extraction:
+
+Write:
+Verify data is stored correctly.
+
+Read:
+Verify correct data is returned.
+
+Full:
+Verify overflow protection.
+
+Empty:
+Verify invalid read handling.
+
+Reset:
+Verify FIFO returns to initial state.
+
+
+Verification Scenario:
+
+Write feature:
+
+Apply write enable
+↓
+Send data
+↓
+Read data
+↓
+Compare expected and actual
+
+
+Test Creation:
+
+Sequence
+↓
+Sequencer
+↓
+Driver
+↓
+DUT
+
+
+Checking:
+
+Scoreboard:
+Expected result vs Actual result
+
+
+Assertion:
+Checks rules and timing behavior.
+
+
+Coverage:
+
+Checks:
+"Did we test all required scenarios?"
+
+
+Corner Cases:
+
+- FIFO full and another write
+- FIFO empty and read request
+- Reset during operation
+- Back-to-back transactions
+
+
+Interview Answer:
+
+"I start by understanding the specification and extracting features. Then I create verification scenarios and tests. I use drivers to apply stimulus, monitors to observe DUT behavior, scoreboards to check correctness, assertions for protocol rules, and coverage to measure completeness."
+
+
+Quick Revision:
+
+Feature = What to verify
+
+Scenario = How to verify
+
+Scoreboard = Correctness
+
+Coverage = Completeness
+
+
+# 2. Constrained Random vs Directed vs Formal Verification
+
+## Interview Question
+
+"Explain directed verification, constrained random verification, and formal verification."
+
+
+## Directed Verification
+
+Manually created tests for known scenarios.
+
+Example:
+
+FIFO reset test:
+Apply reset
+Check FIFO is empty
+
+
+Advantages:
+- Easy debugging
+- Predictable
+
+
+Limitations:
+- May miss unexpected bugs
+
+
+---
+
+## Constrained Random Verification
+
+Generates random inputs with constraints.
+
+Example:
+
+Random:
+- Address
+- Data
+- Transactions
+
+
+Advantages:
+- Finds unknown bugs
+- Large input exploration
+
+
+Limitations:
+- Debug can be harder
+
+
+---
+
+## Formal Verification
+
+Mathematically proves design properties.
+
+Example:
+
+FIFO should never overflow.
+
+
+Advantages:
+- Finds corner cases
+- Provides proof
+
+
+Limitations:
+- Expensive for large designs
+
+
+---
+
+## Comparison
+
+Directed:
+Test what you know.
+
+Constrained Random:
+Find unknown bugs.
+
+Formal:
+Prove required behavior.
+
+
+Interview Answer:
+
+"Directed verification is useful for known scenarios, constrained random explores a wider input space to find unexpected bugs, and formal verification proves specific properties mathematically."
+
+
+# 3. Verification Plan for New Feature/Block
+
+## Interview Question
+
+"How would you create a verification plan for a new feature?"
+
+
+## Flow
+
+Specification
+↓
+Feature Extraction
+↓
+Verification Scenarios
+↓
+Tests
+↓
+Checks
+↓
+Coverage
+↓
+Corner Cases
+
+
+## Example: New Accelerator Feature
+
+Features:
+
+- Configuration registers
+- Data processing
+- Status reporting
+- Interrupt generation
+
+
+Verification Scenarios:
+
+Register:
+
+Write register
+↓
+Read back value
+↓
+Compare
+
+
+Data:
+
+Send input
+↓
+Check output
+
+
+Interrupt:
+
+Complete operation
+↓
+Check interrupt generated
+
+
+Checks:
+
+Scoreboard:
+Checks data correctness.
+
+Assertions:
+Checks protocol/timing rules.
+
+
+Coverage:
+
+- Register access
+- Data processing
+- Interrupt
+- Error cases
+
+
+Corner Cases:
+
+- Reset during operation
+- Invalid configuration
+- Maximum values
+
+
+Interview Answer:
+
+"For a new feature, I first understand the specification, extract features, create scenarios, define checking mechanisms, add coverage goals, and identify corner cases."
+
+
+# 4. Simulation vs Emulation vs FPGA Prototyping
+
+## Interview Question
+
+"Why do we need simulation, emulation, and FPGA prototyping?"
+
+
+## Simulation
+
+RTL runs on simulator.
+
+Flow:
+
+RTL
+↓
+Simulator
+↓
+Results
+
+
+Advantages:
+- Best debug visibility
+- Waveforms available
+- Easy assertions
+
+
+Limitation:
+Slow for large designs
+
+
+Used for:
+- RTL debugging
+- Block verification
+
+
+---
+
+## Emulation
+
+RTL runs on specialized hardware.
+
+
+Advantages:
+- Faster than simulation
+- Supports software testing
+
+
+Limitations:
+- Expensive
+- Less visibility
+
+
+---
+
+## FPGA Prototyping
+
+RTL implemented on FPGA.
+
+
+Advantages:
+- Fastest
+- Closest to silicon
+
+
+Limitations:
+- Harder debugging
+
+
+---
+
+## Comparison
+
+Simulation:
+Best debug
+
+Emulation:
+System-level testing
+
+FPGA:
+Highest speed
+
+
+Interview Answer:
+
+"Simulation provides maximum debug visibility, emulation provides faster system testing, and FPGA prototyping provides the closest behavior to real silicon."
+
+
+# 5. Co-simulation RTL + Firmware
+
+## Interview Question
+
+"How would you validate firmware and RTL consistency?"
+
+
+## Concept
+
+Co-simulation runs:
+
+Firmware
+
++
+
+RTL
+
+
+Purpose:
+
+Verify hardware-software interaction.
+
+
+## Checkpoints
+
+
+Register Map:
+
+Verify:
+- Address
+- Bit positions
+- Access type
+
+
+Data Flow:
+
+Firmware sends data
+↓
+RTL processes
+↓
+Firmware receives result
+
+
+Interrupt:
+
+RTL generates interrupt
+↓
+Firmware handles interrupt
+
+
+Performance:
+
+Check:
+- Latency
+- Throughput
+
+
+Interview Answer:
+
+"Co-simulation validates firmware and RTL consistency by running software with the hardware model. It verifies registers, data flow, interrupts, and performance before silicon."
+
+
+Quick Revision:
+
+Firmware
+↓
+Register Interface
+↓
+RTL
+↓
+Status / Interrupt
+↓
+Firmware
+
+
+# 6. uvm_config_db vs uvm_resource_db
+
+## Interview Question
+
+"Difference between uvm_config_db and uvm_resource_db? Which is preferred?"
+
+
+## uvm_config_db
+
+Preferred UVM method.
+
+Used for:
+
+- Virtual interfaces
+- Configuration objects
+- Parameters
+
+
+Flow:
+
+Test
+↓
+Environment
+↓
+Agent
+↓
+Driver
+
+
+Example:
+
+```systemverilog
+uvm_config_db #(virtual interface)::set(
+this,
+"*",
+"vif",
+vif
+);
