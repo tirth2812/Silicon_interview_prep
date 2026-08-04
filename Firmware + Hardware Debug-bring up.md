@@ -1179,65 +1179,115 @@ Example:
 
 ```cpp
 #include <iostream>
-#include <cstdint>
-#include <stdexcept>
+
 using namespace std;
 
-template<typename T, int DEPTH>
-class SyncFIFO {
+class CircularQueue
+{
 private:
-    T      memory[DEPTH];
-    int    write_ptr;
-    int    read_ptr;
-    int    count;
+
+    static const int SIZE = 8;
+
+    int buffer[SIZE];
+
+    int front_index;
+
+    int rear_index;
+
+    int element_count;
 
 public:
-    SyncFIFO() : write_ptr(0), read_ptr(0), count(0) {}
 
-    bool full()  const { return count == DEPTH; }
-    bool empty() const { return count == 0; }
-
-    void write(T data) {
-        if (full())
-            throw runtime_error("FIFO overflow: write when full");
-        memory[write_ptr] = data;
-        write_ptr = (write_ptr + 1) % DEPTH;
-        count++;
+    CircularQueue()
+    {
+        front_index = 0;
+        rear_index = 0;
+        element_count = 0;
     }
 
-    T read() {
-        if (empty())
-            throw runtime_error("FIFO underflow: read when empty");
-        T data = memory[read_ptr];
-        read_ptr = (read_ptr + 1) % DEPTH;
-        count--;
-        return data;
+
+    bool isEmpty()
+    {
+        return element_count == 0;
     }
+
+
+    bool isFull()
+    {
+        return element_count == SIZE;
+    }
+
+
+    void push(int data_value)
+    {
+        if(isFull())
+        {
+            cout << "Queue Full" << endl;
+            return;
+        }
+
+        buffer[rear_index] = data_value;
+
+        rear_index = (rear_index + 1) % SIZE;
+
+        element_count++;
+    }
+
+
+    int pop()
+    {
+        if(isEmpty())
+        {
+            cout << "Queue Empty" << endl;
+            return -1;
+        }
+
+        int removed_value = buffer[front_index];
+
+        front_index = (front_index + 1) % SIZE;
+
+        element_count--;
+
+        return removed_value;
+    }
+
+
+    void display()
+    {
+        if(isEmpty())
+        {
+            cout << "Queue Empty" << endl;
+            return;
+        }
+
+        int current_index = front_index;
+
+        for(int index = 0; index < element_count; index++)
+        {
+            cout << buffer[current_index] << " ";
+
+            current_index = (current_index + 1) % SIZE;
+        }
+
+        cout << endl;
+    }
+
 };
 
-int main() {
-    SyncFIFO<uint8_t, 8> fifo;
 
-    // Write 5 items
-    for (int i = 0; i < 5; i++) {
-        fifo.write(i * 10);
-        cout << "Written: " << i * 10 << endl;
-    }
+int main()
+{
+    CircularQueue queue_object;
 
-    // Read 5 items (should be FIFO order)
-    for (int i = 0; i < 5; i++) {
-        cout << "Read: " << (int)fifo.read() << endl;
-    }
+    queue_object.push(10);
+    queue_object.push(20);
+    queue_object.push(30);
 
-    // Test overflow detection
-    try {
-        SyncFIFO<uint8_t, 2> small_fifo;
-        small_fifo.write(1);
-        small_fifo.write(2);
-        small_fifo.write(3);  // should throw
-    } catch (const exception& e) {
-        cout << "Caught: " << e.what() << endl;
-    }
+    queue_object.display();
+
+    cout << queue_object.pop() << endl;
+
+    queue_object.display();
 
     return 0;
 }
