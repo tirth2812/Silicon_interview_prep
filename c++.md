@@ -1,5 +1,4 @@
 # C++ Basic Coding Interview Cheat Sheet
-## 5–10 Minute Pre-Interview Revision
 
 ## Table of Contents
 
