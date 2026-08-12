@@ -1,5 +1,4 @@
 # Silicon Fundamentals — Interview Cheat Sheet
-## Day 4 Companion
 
 ## Table of Contents
 
